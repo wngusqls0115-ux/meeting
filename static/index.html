@@ -4,9 +4,10 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>회의록</title>
-  <link rel="stylesheet" href="/styles.css"/>
+  <link rel="stylesheet" href="/styles.css?v=20260824-frontend-fix-1"/>
 </head>
 <body>
+  <div id="appErrorBanner" class="app-error-banner hidden"></div>
   <div class="app">
     <aside class="sidebar">
       <div class="brand"><div class="brand-mark">M</div><div><strong>회의록</strong><span>PLAUD 연동</span></div></div>
@@ -90,6 +91,18 @@
     <div id="adminUserList" class="admin-user-list"></div>
   </div></dialog>
 
-  <script src="/config.js"></script><script src="/app.js"></script>
+  <script src="/config.js?v=20260824-frontend-fix-1"></script>
+  <script src="/app.js?v=20260824-frontend-fix-1"></script>
+  <script>
+    setTimeout(() => {
+      if (!window.MEETING_APP_LOADED) {
+        const banner = document.querySelector("#appErrorBanner");
+        if (banner) {
+          banner.textContent = "앱 JavaScript를 불러오지 못했습니다. Ctrl+F5로 새로고침하거나 배포 상태를 확인해 주세요.";
+          banner.classList.remove("hidden");
+        }
+      }
+    }, 1200);
+  </script>
 </body>
 </html>

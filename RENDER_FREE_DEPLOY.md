@@ -1,37 +1,38 @@
-# Render Free 테스트 배포
+# Render Free 테스트 배포 — OpenAI API 없이
 
-이 버전은 카드 등록 없이 공개 URL 동작을 검증하기 위한 테스트용입니다.
+이 버전은 카드 등록 및 OpenAI API Key 없이 공개 URL/로그인/회의록 기능을 테스트합니다.
 
-## 중요
-Render Free Web Service의 로컬 파일은 영구 저장소가 아닙니다.
-따라서 SQLite `meetings.db`의 회의록/사용자 데이터가 재배포·재시작 시 사라질 수 있습니다.
+## 사용할 Secret
+Render에서 아래 3개만 입력합니다.
 
-운영 전에는 아래 중 하나로 전환해야 합니다.
-- 유료 Persistent Disk
-- PostgreSQL
-- 회사 서버/클라우드 DB
+- APP_ADMIN_EMAIL
+- APP_ADMIN_PASSWORD
+- PLAUD_WEBHOOK_SECRET
 
-## 배포 순서
+`OPENAI_API_KEY`는 입력하지 않습니다.
 
-1. 이 버전을 GitHub `main`에 push
-2. Render Dashboard → New + → Blueprint
-3. `wngusqls0115-ux/meeting` 선택
-4. Blueprint가 `render.yaml`을 읽음
-5. 다음 Secret 입력
-   - APP_ADMIN_EMAIL
-   - APP_ADMIN_PASSWORD
-   - PLAUD_WEBHOOK_SECRET
-   - OPENAI_API_KEY
-6. Apply / Deploy
-7. 생성된 `https://...onrender.com` 주소 접속
-8. 관리자 계정으로 로그인
-9. 회의 생성/수정/공유/번역 테스트
+## 동작하는 기능
+- 공개 URL 접속
+- 로그인 보호
+- 회의록 등록
+- 회의록 조회
+- 회의록 수정
+- 검색
+- 보호 공유 링크
+- 관리자 사용자 관리
+- PLAUD webhook 수신 구조
 
-## 최초 관리자 비밀번호 조건
-12자 이상 + 영문 대문자 + 영문 소문자 + 숫자 포함
+## 이번 테스트에서 비활성화되는 기능
+- 영어 자동 번역
+- 일본어 자동 번역
 
+앱 화면의 English / 日本語 버튼은 API Key가 없으면 비활성화됩니다.
+
+## PLAUD_WEBHOOK_SECRET
+직접 만든 긴 임의 문자열을 사용합니다.
 예:
-StrongPassword1234
+LSMeeting_PLAUD_2026_X7m92Kq4Vb81Nz3P
 
-## 테스트 합격 후
-PostgreSQL 영구 DB 연결 → 커스텀 도메인 연결 순서로 진행합니다.
+## 주의
+Render Free의 SQLite 파일은 영구 저장이 보장되지 않습니다.
+이번 단계는 기능 확인용입니다.

@@ -91,3 +91,20 @@ label input,label textarea,label select{margin-top:7px;font-weight:400}
   .admin-create-form{grid-template-columns:1fr}
   .admin-user-row{align-items:flex-start;flex-direction:column}
 }
+
+.app-error-banner{
+  position:fixed;
+  top:12px;
+  left:50%;
+  transform:translateX(-50%);
+  z-index:99999;
+  max-width:min(760px,92vw);
+  padding:11px 14px;
+  border:1px solid #e7b8b8;
+  border-radius:10px;
+  background:#fff3f3;
+  color:#a12626;
+  box-shadow:0 8px 24px rgba(0,0,0,.12);
+  font-size:13px;
+  font-weight:600;
+}

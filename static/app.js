@@ -1,8 +1,28 @@
+window.MEETING_APP_LOADED = true;
+
+window.addEventListener("error", (event) => {
+  const banner = document.querySelector("#appErrorBanner");
+  if (banner) {
+    banner.textContent = "화면 스크립트 오류: " + (event.message || "알 수 없는 오류");
+    banner.classList.remove("hidden");
+  }
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  const banner = document.querySelector("#appErrorBanner");
+  if (banner) {
+    const reason = event.reason?.message || String(event.reason || "알 수 없는 오류");
+    banner.textContent = "앱 실행 오류: " + reason;
+    banner.classList.remove("hidden");
+  }
+});
+
 let currentMeetingId = null;
 let currentLanguage = "ko";
 let currentMeeting = null;
 let debounceTimer = null;
 let currentUser = null;
+let translationConfigured = true;
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -71,7 +91,18 @@ function renderMeeting(m){
 
 function updateLanguageButtons(m){
   const available=new Set(["ko",...(m.available_translations||[])]);
-  $$(".lang-btn").forEach(btn=>{ const lang=btn.dataset.lang; btn.classList.toggle("active",lang===currentLanguage); btn.classList.toggle("needs-translation",lang!=="ko"&&!available.has(lang)); btn.title=lang!=="ko"&&!available.has(lang)?"클릭하면 번역을 생성합니다":""; });
+  $$(".lang-btn").forEach(btn=>{
+    const lang=btn.dataset.lang;
+    btn.classList.toggle("active",lang===currentLanguage);
+    btn.classList.toggle("needs-translation",lang!=="ko"&&!available.has(lang));
+    if(lang!=="ko" && !translationConfigured){
+      btn.disabled = true;
+      btn.title = "번역 API가 설정되지 않은 무료 테스트 모드입니다.";
+    } else {
+      btn.disabled = false;
+      btn.title = lang!=="ko"&&!available.has(lang) ? "클릭하면 번역을 생성합니다" : "";
+    }
+  });
 }
 
 async function switchLanguage(lang){
@@ -230,4 +261,19 @@ $("#createUserForm").addEventListener("submit", async (e) => {
 
 $("#logoutBtn").onclick=async()=>{ await fetch(apiUrl("/api/auth/logout"),{method:"POST",credentials:"include"}); location.replace("/login.html"); };
 
-(async function boot(){ if(!(await requireLogin())) return; await loadMeetings(); })();
+(async function boot(){
+  if(!(await requireLogin())) return;
+  try {
+    const h = await fetch(apiUrl("/api/health"), {credentials:"include"});
+    if(h.ok){
+      const health = await h.json();
+      translationConfigured = !!health.translation_configured;
+      if(!translationConfigured){
+        const notice = $("#translationNotice");
+        notice.textContent = "현재 무료 테스트 모드에서는 영어·일본어 자동 번역이 비활성화되어 있습니다.";
+        notice.classList.remove("hidden");
+      }
+    }
+  } catch {}
+  await loadMeetings();
+})();
