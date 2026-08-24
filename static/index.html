@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>회의록</title>
+  <link rel="stylesheet" href="/styles.css"/>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">M</div><div><strong>회의록</strong><span>PLAUD 연동</span></div></div>
+      <div class="account-box">
+        <div><strong id="userName">사용자</strong><span id="userEmail"></span></div>
+        <div class="account-actions">
+          <button id="passwordBtn" class="text-btn">비밀번호 변경</button>
+          <button id="adminBtn" class="text-btn hidden">사용자 관리</button>
+          <button id="logoutBtn" class="text-btn">로그아웃</button>
+        </div>
+      </div>
+      <button id="newBtn" class="primary">+ 회의 가져오기</button>
+      <input id="search" class="search" placeholder="한국어·영어·일본어 검색"/>
+      <div id="meetingList" class="meeting-list"></div>
+    </aside>
+    <main class="main">
+      <div id="empty" class="empty hidden"><h1>회의 기록을 한 곳에서</h1><p>PLAUD 전사본을 가져와 저장하고, 번역하고, 검색하고, 로그인 사용자끼리 공유할 수 있습니다.</p><button id="emptyNewBtn" class="primary">첫 회의 가져오기</button></div>
+      <article id="detail" class="detail hidden">
+        <header class="detail-head">
+          <div><div id="meta" class="meta"></div><h1 id="title"></h1></div>
+          <div class="head-actions">
+            <div class="language-switch" aria-label="언어 선택"><button class="lang-btn active" data-lang="ko">한국어</button><button class="lang-btn" data-lang="en">English</button><button class="lang-btn" data-lang="ja">日本語</button></div>
+            <button id="editBtn" class="secondary">수정</button><button id="shareBtn" class="secondary">공유</button>
+          </div>
+        </header>
+        <div id="translationNotice" class="translation-notice hidden"></div>
+        <section><h2>AI 요약</h2><div id="summary" class="paper muted"></div></section>
+        <section><h2>전체 전사</h2><pre id="transcript" class="paper transcript"></pre></section>
+      </article>
+    </main>
+  </div>
+
+  <dialog id="importDialog"><form id="importForm" method="dialog">
+    <div class="dialog-head"><h2>회의 가져오기</h2><button type="button" class="icon" id="closeImport">×</button></div>
+    <label>회의 제목<input id="importTitle" required placeholder="예: 주간 생산기술 회의"/></label>
+    <label>회의 일시<input id="importDate" type="datetime-local"/></label>
+    <label>PLAUD 전사 파일<input id="fileInput" type="file" accept=".txt,.srt,.md"/></label>
+    <label>또는 전사 내용 붙여넣기<textarea id="importTranscript" rows="10" placeholder="전사 내용을 붙여넣으세요."></textarea></label>
+    <label>PLAUD AI 요약 (선택)<textarea id="importSummary" rows="5" placeholder="PLAUD에서 생성한 요약을 붙여넣으세요."></textarea></label>
+    <div class="dialog-actions"><button type="button" class="secondary" id="cancelImport">취소</button><button class="primary" type="submit">저장</button></div>
+  </form></dialog>
+
+  <dialog id="editDialog"><form id="editForm" method="dialog">
+    <div class="dialog-head"><h2>회의록 수정</h2><button type="button" class="icon" id="closeEdit">×</button></div>
+    <p class="dialog-note">원본 한국어 회의록을 수정합니다. 수정 후 기존 영어·일본어 번역은 삭제되며 필요할 때 다시 생성됩니다.</p>
+    <label>회의 제목<input id="editTitle" required/></label>
+    <label>회의 일시<input id="editDate" type="datetime-local"/></label>
+    <label>AI 요약<textarea id="editSummary" rows="7"></textarea></label>
+    <label>전체 전사<textarea id="editTranscript" rows="14" required></textarea></label>
+    <div class="dialog-actions"><button type="button" class="secondary" id="cancelEdit">취소</button><button class="primary" type="submit">수정 저장</button></div>
+  </form></dialog>
+
+  <dialog id="shareDialog"><form id="shareForm" method="dialog">
+    <div class="dialog-head"><h2>로그인 보호 공유</h2><button type="button" class="icon" id="closeShare">×</button></div>
+    <p class="dialog-note"><strong>링크 자체는 누구에게나 전달할 수 있습니다.</strong> 다만 링크를 연 사람은 반드시 로그인해야 회의 내용을 볼 수 있습니다.</p>
+    <label>링크 유효기간<select id="expires"><option value="24">24시간</option><option value="168" selected>7일</option><option value="720">30일</option><option value="none">만료 없음</option></select></label>
+    <div id="shareResult" class="share-result hidden"><input id="shareUrl" readonly/><button type="button" id="copyShare" class="secondary">복사</button></div>
+    <div class="dialog-actions"><button type="button" class="secondary" id="cancelShare">닫기</button><button class="primary" type="submit">보호 링크 만들기</button></div>
+  </form></dialog>
+
+
+  <dialog id="passwordDialog"><form id="passwordForm" method="dialog">
+    <div class="dialog-head"><h2>비밀번호 변경</h2><button type="button" class="icon" id="closePassword">×</button></div>
+    <label>현재 비밀번호<input id="currentPassword" type="password" autocomplete="current-password" required/></label>
+    <label>새 비밀번호<input id="newPassword" type="password" autocomplete="new-password" minlength="12" required/></label>
+    <p class="dialog-note">12자 이상, 영문 대문자·소문자·숫자를 포함해야 합니다. 변경 후 다시 로그인합니다.</p>
+    <div id="passwordError" class="form-error hidden"></div>
+    <div class="dialog-actions"><button type="button" class="secondary" id="cancelPassword">취소</button><button class="primary" type="submit">변경</button></div>
+  </form></dialog>
+
+  <dialog id="adminDialog"><div class="admin-dialog">
+    <div class="dialog-head"><h2>사용자 관리</h2><button type="button" class="icon" id="closeAdmin">×</button></div>
+    <p class="dialog-note">공개 회원가입은 없습니다. 여기에서 관리자가 허용한 사용자만 로그인할 수 있습니다.</p>
+    <form id="createUserForm" class="admin-create-form">
+      <label>이름<input id="adminDisplayName" placeholder="홍길동"/></label>
+      <label>이메일<input id="adminEmail" type="email" required placeholder="name@company.com"/></label>
+      <label>초기 비밀번호<input id="adminPassword" type="password" minlength="12" required/></label>
+      <button class="primary" type="submit">사용자 추가</button>
+    </form>
+    <div id="adminError" class="form-error hidden"></div>
+    <div id="adminUserList" class="admin-user-list"></div>
+  </div></dialog>
+
+  <script src="/config.js"></script><script src="/app.js"></script>
+</body>
+</html>

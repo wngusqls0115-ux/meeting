@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>로그인 · 회의록</title>
+  <link rel="stylesheet" href="/styles.css"/>
+</head>
+<body class="auth-page">
+  <main class="auth-card">
+    <div class="brand auth-brand">
+      <div class="brand-mark">M</div>
+      <div><strong>회의록</strong><span>보호된 회의 기록</span></div>
+    </div>
+    <h1>로그인</h1>
+    <p class="auth-copy">링크는 누구나 열 수 있지만, 회의록의 내용은 로그인한 사용자만 볼 수 있습니다.</p>
+    <div id="setupWarning" class="auth-warning hidden">등록된 사용자가 없습니다. 서버 관리자에게 <code>APP_ADMIN_EMAIL</code>과 <code>APP_ADMIN_PASSWORD</code> 설정을 요청하세요.</div>
+    <form id="loginForm">
+      <label>이메일<input id="email" type="email" autocomplete="username" required placeholder="name@company.com"/></label>
+      <label>비밀번호<input id="password" type="password" autocomplete="current-password" required/></label>
+      <div id="loginError" class="form-error hidden"></div>
+      <button id="loginBtn" class="primary auth-submit" type="submit">로그인</button>
+    </form>
+  </main>
+  <script src="/config.js"></script>
+  <script>
+    const API_BASE_URL = String(window.APP_CONFIG?.API_BASE_URL || "").replace(/\/$/, "");
+    const apiUrl = (path) => `${API_BASE_URL}${path}`;
+    const rawNext = new URLSearchParams(location.search).get("next") || "/";
+    const safeNext = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/";
+    async function alreadyLoggedIn(){
+      const r = await fetch(apiUrl("/api/auth/me"), {credentials:"include"});
+      if (r.ok) location.replace(safeNext);
+    }
+    async function checkSetup(){
+      try {
+        const r = await fetch(apiUrl("/api/health"), {credentials:"include"});
+        const h = await r.json();
+        document.querySelector("#setupWarning").classList.toggle("hidden", !!h.auth_configured);
+      } catch {}
+    }
+    document.querySelector("#loginForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const error = document.querySelector("#loginError");
+      const btn = document.querySelector("#loginBtn");
+      error.classList.add("hidden"); btn.disabled = true; btn.textContent = "로그인 중...";
+      try {
+        const r = await fetch(apiUrl("/api/auth/login"), {
+          method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({email:document.querySelector("#email").value.trim(), password:document.querySelector("#password").value})
+        });
+        if (!r.ok) {
+          let msg = "로그인에 실패했습니다.";
+          try { msg = (await r.json()).detail || msg; } catch {}
+          throw new Error(msg);
+        }
+        location.replace(safeNext);
+      } catch(err) {
+        error.textContent = err.message; error.classList.remove("hidden");
+      } finally { btn.disabled = false; btn.textContent = "로그인"; }
+    });
+    alreadyLoggedIn(); checkSetup();
+  </script>
+</body>
+</html>

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>공유 회의록</title><link rel="stylesheet" href="/styles.css"/></head>
+<body class="shared-page">
+  <main class="shared-wrap">
+    <div class="shared-top">
+      <div><div class="share-badge">로그인 보호 공유</div><div id="sharedUser" class="shared-user"></div></div>
+      <div class="shared-actions"><div id="sharedLanguages" class="language-switch hidden"></div><a class="secondary link-button" href="/">전체 회의록</a><button id="sharedLogout" class="secondary">로그아웃</button></div>
+    </div>
+    <div id="sharedError" class="empty hidden"></div>
+    <article id="sharedContent" class="detail hidden"><div id="sharedMeta" class="meta"></div><h1 id="sharedTitle"></h1><section><h2>요약</h2><div id="sharedSummary" class="paper"></div></section><section><h2>전체 전사</h2><pre id="sharedTranscript" class="paper transcript"></pre></section></article>
+  </main>
+  <script src="/config.js"></script>
+  <script>
+    const API_BASE_URL = String(window.APP_CONFIG?.API_BASE_URL || "").replace(/\/$/, "");
+    const apiUrl = (path) => `${API_BASE_URL}${path}`;
+    const token = new URLSearchParams(location.search).get("token");
+    let currentLang = "ko";
+    const labels = {ko:"한국어", en:"English", ja:"日本語"};
+    const loginUrl = () => "/login.html?next=" + encodeURIComponent(location.pathname + location.search);
+    async function ensureAuth(){
+      const r = await fetch(apiUrl("/api/auth/me"), {credentials:"include"});
+      if (!r.ok) { location.replace(loginUrl()); return false; }
+      const d = await r.json();
+      document.querySelector("#sharedUser").textContent = `로그인: ${d.user.display_name || d.user.email}`;
+      return true;
+    }
+    async function load(lang="ko"){
+      try {
+        const r = await fetch(apiUrl("/api/share/" + encodeURIComponent(token || "") + "?lang=" + lang), {credentials:"include"});
+        if (r.status === 401) { location.replace(loginUrl()); return; }
+        if (!r.ok) {
+          let detail = "공유 회의록을 찾을 수 없습니다.";
+          try { detail = (await r.json()).detail || detail; } catch {}
+          throw new Error(r.status === 410 ? "공유 링크가 만료되었습니다." : detail);
+        }
+        const m = await r.json(); currentLang = lang;
+        document.querySelector("#sharedTitle").textContent = m.title;
+        document.querySelector("#sharedMeta").textContent = m.recorded_at || m.created_at;
+        document.querySelector("#sharedSummary").textContent = m.summary || "요약 없음";
+        document.querySelector("#sharedTranscript").textContent = m.transcript;
+        renderLanguages(m.available_languages || ["ko"]);
+        document.querySelector("#sharedContent").classList.remove("hidden");
+        document.querySelector("#sharedError").classList.add("hidden");
+      } catch(e) { const el=document.querySelector("#sharedError"); el.textContent=e.message; el.classList.remove("hidden"); }
+    }
+    function renderLanguages(langs){
+      const el=document.querySelector("#sharedLanguages"); el.innerHTML="";
+      langs.forEach(lang => { const b=document.createElement("button"); b.className="lang-btn"+(lang===currentLang?" active":""); b.textContent=labels[lang]||lang.toUpperCase(); b.onclick=()=>load(lang); el.appendChild(b); });
+      el.classList.toggle("hidden", langs.length <= 1);
+    }
+    document.querySelector("#sharedLogout").onclick = async () => { await fetch(apiUrl("/api/auth/logout"), {method:"POST", credentials:"include"}); location.replace(loginUrl()); };
+    (async()=>{ if(await ensureAuth()) await load(); })();
+  </script>
+</body>
+</html>
