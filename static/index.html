@@ -4,7 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>회의록</title>
-  <link rel="stylesheet" href="/styles.css?v=20260824-frontend-fix-1"/>
+  <link rel="stylesheet" href="/styles.css?v=20260824-folders-v2"/>
 </head>
 <body>
   <div id="appErrorBanner" class="app-error-banner hidden"></div>
@@ -20,7 +20,16 @@
         </div>
       </div>
       <button id="newBtn" class="primary">+ 회의 가져오기</button>
-      <input id="search" class="search" placeholder="한국어·영어·일본어 검색"/>
+
+      <section class="folder-section">
+        <div class="folder-head">
+          <strong>폴더</strong>
+          <button id="newFolderBtn" class="folder-add-btn" title="새 폴더">+</button>
+        </div>
+        <div id="folderList" class="folder-list"></div>
+      </section>
+
+      <input id="search" class="search" placeholder="선택한 폴더에서 검색"/>
       <div id="meetingList" class="meeting-list"></div>
     </aside>
     <main class="main">
@@ -44,6 +53,7 @@
     <div class="dialog-head"><h2>회의 가져오기</h2><button type="button" class="icon" id="closeImport">×</button></div>
     <label>회의 제목<input id="importTitle" required placeholder="예: 주간 생산기술 회의"/></label>
     <label>회의 일시<input id="importDate" type="datetime-local"/></label>
+    <label>폴더<select id="importFolder"><option value="">미분류</option></select></label>
     <label>PLAUD 전사 파일<input id="fileInput" type="file" accept=".txt,.srt,.md"/></label>
     <label>또는 전사 내용 붙여넣기<textarea id="importTranscript" rows="10" placeholder="전사 내용을 붙여넣으세요."></textarea></label>
     <label>PLAUD AI 요약 (선택)<textarea id="importSummary" rows="5" placeholder="PLAUD에서 생성한 요약을 붙여넣으세요."></textarea></label>
@@ -55,6 +65,7 @@
     <p class="dialog-note">원본 한국어 회의록을 수정합니다. 수정 후 기존 영어·일본어 번역은 삭제되며 필요할 때 다시 생성됩니다.</p>
     <label>회의 제목<input id="editTitle" required/></label>
     <label>회의 일시<input id="editDate" type="datetime-local"/></label>
+    <label>폴더<select id="editFolder"><option value="">미분류</option></select></label>
     <label>AI 요약<textarea id="editSummary" rows="7"></textarea></label>
     <label>전체 전사<textarea id="editTranscript" rows="14" required></textarea></label>
     <div class="dialog-actions"><button type="button" class="secondary" id="cancelEdit">취소</button><button class="primary" type="submit">수정 저장</button></div>
@@ -91,8 +102,26 @@
     <div id="adminUserList" class="admin-user-list"></div>
   </div></dialog>
 
-  <script src="/config.js?v=20260824-frontend-fix-1"></script>
-  <script src="/app.js?v=20260824-frontend-fix-1"></script>
+  <dialog id="folderDialog"><form id="folderForm" method="dialog">
+    <div class="dialog-head"><h2>새 폴더</h2><button type="button" class="icon" id="closeFolder">×</button></div>
+    <label>폴더 이름<input id="folderName" maxlength="80" required placeholder="예: 파일럿 설비"/></label>
+    <div id="folderError" class="form-error hidden"></div>
+    <div class="dialog-actions"><button type="button" class="secondary" id="cancelFolder">취소</button><button class="primary" type="submit">폴더 만들기</button></div>
+  </form></dialog>
+
+  <dialog id="folderManageDialog"><div class="folder-manage-dialog">
+    <div class="dialog-head"><h2>폴더 관리</h2><button type="button" class="icon" id="closeFolderManage">×</button></div>
+    <label>폴더 이름<input id="renameFolderName" maxlength="80"/></label>
+    <div id="folderManageError" class="form-error hidden"></div>
+    <div class="dialog-actions folder-manage-actions">
+      <button id="deleteFolderBtn" type="button" class="danger-button">폴더 삭제</button>
+      <button id="renameFolderBtn" type="button" class="primary">이름 변경</button>
+    </div>
+    <p class="dialog-note">폴더를 삭제해도 회의록은 삭제되지 않고 미분류로 이동합니다.</p>
+  </div></dialog>
+
+  <script src="/config.js?v=20260824-folders-v2"></script>
+  <script src="/app.js?v=20260824-folders-v2"></script>
   <script>
     setTimeout(() => {
       if (!window.MEETING_APP_LOADED) {

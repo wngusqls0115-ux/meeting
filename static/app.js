@@ -23,12 +23,16 @@ let currentMeeting = null;
 let debounceTimer = null;
 let currentUser = null;
 let translationConfigured = true;
+let currentFolder = 'all';
+let foldersCache = [];
+let managedFolderId = null;
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 const API_BASE_URL = String(window.APP_CONFIG?.API_BASE_URL || "").replace(/\/$/, "");
 const apiUrl = (path) => `${API_BASE_URL}${path}`;
 const listEl = $("#meetingList");
+const folderListEl = $("#folderList");
 const detailEl = $("#detail");
 const emptyEl = $("#empty");
 const importDialog = $("#importDialog");
@@ -62,14 +66,84 @@ function fmtDate(v){ if(!v) return ""; try { return new Date(v).toLocaleString("
 function toLocalInput(v){ if(!v) return ""; const d=new Date(v); if(Number.isNaN(d.getTime())) return ""; const local=new Date(d.getTime()-d.getTimezoneOffset()*60000); return local.toISOString().slice(0,16); }
 function escapeHtml(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c])); }
 
+
+async function loadFolders(){
+  const data = await api("/api/folders");
+  foldersCache = data.folders || [];
+  renderFolders(data);
+  populateFolderSelects();
+}
+
+function renderFolders(data){
+  folderListEl.innerHTML = "";
+
+  function addRow(label, value, count, manageable=false){
+    const row = document.createElement("div");
+    row.className = "folder-row" + (String(currentFolder) === String(value) ? " active" : "");
+
+    const btn = document.createElement("button");
+    btn.className = "folder-filter-btn";
+    btn.innerHTML = `<span class="folder-icon">📁</span><span class="folder-label">${escapeHtml(label)}</span><span class="folder-count">${count || 0}</span>`;
+    btn.onclick = async () => {
+      currentFolder = value;
+      currentMeetingId = null;
+      currentMeeting = null;
+      detailEl.classList.add("hidden");
+      await loadFolders();
+      await loadMeetings($("#search").value);
+    };
+    row.appendChild(btn);
+
+    if(manageable){
+      const menu = document.createElement("button");
+      menu.className = "folder-menu-btn";
+      menu.textContent = "⋯";
+      menu.title = "폴더 관리";
+      menu.onclick = () => openFolderManage(Number(value));
+      row.appendChild(menu);
+    }
+
+    folderListEl.appendChild(row);
+  }
+
+  addRow("전체 회의", "all", data.total_count, false);
+  addRow("미분류", "uncategorized", data.uncategorized_count, false);
+  (data.folders || []).forEach(f => addRow(f.name, String(f.id), f.meeting_count, true));
+}
+
+function populateFolderSelects(){
+  ["#importFolder", "#editFolder"].forEach(selector => {
+    const sel = $(selector);
+    if(!sel) return;
+    const previous = sel.value;
+    sel.innerHTML = `<option value="">미분류</option>`;
+    foldersCache.forEach(f => {
+      const opt = document.createElement("option");
+      opt.value = String(f.id);
+      opt.textContent = f.name;
+      sel.appendChild(opt);
+    });
+    if([...sel.options].some(o => o.value === previous)) sel.value = previous;
+  });
+}
+
+function openFolderManage(folderId){
+  const f = foldersCache.find(x => x.id === folderId);
+  if(!f) return;
+  managedFolderId = folderId;
+  $("#renameFolderName").value = f.name;
+  $("#folderManageError").classList.add("hidden");
+  $("#folderManageDialog").showModal();
+}
+
 async function loadMeetings(q=""){
-  const rows = await api("/api/meetings?q=" + encodeURIComponent(q));
+  const rows = await api("/api/meetings?q=" + encodeURIComponent(q) + "&folder=" + encodeURIComponent(currentFolder));
   listEl.innerHTML = "";
   rows.forEach(m => {
     const btn=document.createElement("button"); btn.className="meeting-card";
     if(m.id===currentMeetingId) btn.classList.add("active");
     const badges=["ko",...(m.translations||[])].map(x=>`<span class="mini-lang">${x.toUpperCase()}</span>`).join("");
-    btn.innerHTML=`<strong>${escapeHtml(m.title)}</strong><span>${escapeHtml(fmtDate(m.recorded_at||m.created_at))}</span><small>${escapeHtml(m.source||"")} ${badges}</small>`;
+    btn.innerHTML=`<strong>${escapeHtml(m.title)}</strong><span>${escapeHtml(fmtDate(m.recorded_at||m.created_at))}</span><small>${m.folder_name ? "📁 " + escapeHtml(m.folder_name) + " · " : ""}${escapeHtml(m.source||"")} ${badges}</small>`;
     btn.onclick=()=>openMeeting(m.id,"ko"); listEl.appendChild(btn);
   });
   emptyEl.classList.toggle("hidden", rows.length !== 0 || !!currentMeetingId);
@@ -84,7 +158,7 @@ async function openMeeting(id, lang="ko"){
 
 function renderMeeting(m){
   $("#title").textContent=m.title;
-  $("#meta").textContent=[fmtDate(m.recorded_at||m.created_at),m.source].filter(Boolean).join(" · ");
+  $("#meta").textContent=[m.folder_name ? "📁 "+m.folder_name : null,fmtDate(m.recorded_at||m.created_at),m.source].filter(Boolean).join(" · ");
   $("#summary").textContent=m.summary||"요약이 등록되지 않았습니다.";
   $("#transcript").textContent=m.transcript; updateLanguageButtons(m);
 }
@@ -123,24 +197,31 @@ async function switchLanguage(lang){
 function setLanguageDisabled(disabled){ $$(".lang-btn").forEach(btn=>btn.disabled=disabled); }
 $$(".lang-btn").forEach(btn=>btn.addEventListener("click",()=>switchLanguage(btn.dataset.lang)));
 
-function openImport(){ $("#importForm").reset(); importDialog.showModal(); }
+function openImport(){
+  $("#importForm").reset();
+  populateFolderSelects();
+  if(currentFolder !== "all" && currentFolder !== "uncategorized"){
+    $("#importFolder").value = String(currentFolder);
+  }
+  importDialog.showModal();
+}
 $("#newBtn").onclick=openImport; $("#emptyNewBtn").onclick=openImport; $("#closeImport").onclick=()=>importDialog.close(); $("#cancelImport").onclick=()=>importDialog.close();
 $("#fileInput").addEventListener("change",async(e)=>{ const f=e.target.files?.[0]; if(!f) return; $("#importTranscript").value=await f.text(); if(!$("#importTitle").value) $("#importTitle").value=f.name.replace(/\.(txt|srt|md)$/i,""); });
 $("#importForm").addEventListener("submit",async(e)=>{
   e.preventDefault(); const transcript=$("#importTranscript").value.trim(); if(!transcript) return alert("전사 내용 또는 전사 파일이 필요합니다.");
-  const m=await api("/api/meetings",{method:"POST",body:JSON.stringify({title:$("#importTitle").value.trim(),recorded_at:$("#importDate").value||null,transcript,summary:$("#importSummary").value.trim()||null,source:"manual"})});
+  const m=await api("/api/meetings",{method:"POST",body:JSON.stringify({title:$("#importTitle").value.trim(),recorded_at:$("#importDate").value||null,transcript,summary:$("#importSummary").value.trim()||null,source:"manual",folder_id:$("#importFolder").value?Number($("#importFolder").value):null})});
   importDialog.close(); await loadMeetings(); await openMeeting(m.id,"ko");
 });
 
 $("#editBtn").onclick=async()=>{
   if(!currentMeetingId) return; const m=await api(`/api/meetings/${currentMeetingId}?lang=ko`);
-  $("#editTitle").value=m.title||""; $("#editDate").value=toLocalInput(m.recorded_at); $("#editSummary").value=m.summary||""; $("#editTranscript").value=m.transcript||""; editDialog.showModal();
+  populateFolderSelects(); $("#editTitle").value=m.title||""; $("#editDate").value=toLocalInput(m.recorded_at); $("#editFolder").value=m.folder_id?String(m.folder_id):""; $("#editSummary").value=m.summary||""; $("#editTranscript").value=m.transcript||""; editDialog.showModal();
 };
 $("#closeEdit").onclick=()=>editDialog.close(); $("#cancelEdit").onclick=()=>editDialog.close();
 $("#editForm").addEventListener("submit",async(e)=>{
   e.preventDefault();
-  const m=await api(`/api/meetings/${currentMeetingId}`,{method:"PUT",body:JSON.stringify({title:$("#editTitle").value.trim(),recorded_at:$("#editDate").value||null,summary:$("#editSummary").value.trim()||null,transcript:$("#editTranscript").value,participants:currentMeeting?.participants||null})});
-  editDialog.close(); await openMeeting(m.id,"ko");
+  const m=await api(`/api/meetings/${currentMeetingId}`,{method:"PUT",body:JSON.stringify({title:$("#editTitle").value.trim(),recorded_at:$("#editDate").value||null,summary:$("#editSummary").value.trim()||null,transcript:$("#editTranscript").value,participants:currentMeeting?.participants||null,folder_id:$("#editFolder").value?Number($("#editFolder").value):null})});
+  editDialog.close(); await loadFolders(); await openMeeting(m.id,"ko");
 });
 
 $("#search").addEventListener("input",e=>{ clearTimeout(debounceTimer); debounceTimer=setTimeout(()=>loadMeetings(e.target.value),250); });
@@ -259,6 +340,75 @@ $("#createUserForm").addEventListener("submit", async (e) => {
   }
 });
 
+
+const folderDialog = $("#folderDialog");
+const folderManageDialog = $("#folderManageDialog");
+
+$("#newFolderBtn").onclick = () => {
+  $("#folderForm").reset();
+  $("#folderError").classList.add("hidden");
+  folderDialog.showModal();
+};
+$("#closeFolder").onclick = () => folderDialog.close();
+$("#cancelFolder").onclick = () => folderDialog.close();
+
+$("#folderForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const error = $("#folderError");
+  error.classList.add("hidden");
+  try {
+    const f = await api("/api/folders", {
+      method:"POST",
+      body:JSON.stringify({name:$("#folderName").value.trim()})
+    });
+    folderDialog.close();
+    currentFolder = String(f.id);
+    await loadFolders();
+    await loadMeetings($("#search").value);
+  } catch(err) {
+    error.textContent = err.message;
+    error.classList.remove("hidden");
+  }
+});
+
+$("#closeFolderManage").onclick = () => folderManageDialog.close();
+
+$("#renameFolderBtn").onclick = async () => {
+  if(!managedFolderId) return;
+  const error = $("#folderManageError");
+  error.classList.add("hidden");
+  try {
+    await api(`/api/folders/${managedFolderId}`, {
+      method:"PATCH",
+      body:JSON.stringify({name:$("#renameFolderName").value.trim()})
+    });
+    folderManageDialog.close();
+    await loadFolders();
+    await loadMeetings($("#search").value);
+  } catch(err) {
+    error.textContent = err.message;
+    error.classList.remove("hidden");
+  }
+};
+
+$("#deleteFolderBtn").onclick = async () => {
+  if(!managedFolderId) return;
+  const f = foldersCache.find(x => x.id === managedFolderId);
+  if(!confirm(`"${f?.name || "이 폴더"}"를 삭제할까요?\n회의록은 삭제되지 않고 미분류로 이동합니다.`)) return;
+
+  try {
+    await api(`/api/folders/${managedFolderId}`, {method:"DELETE"});
+    if(String(currentFolder) === String(managedFolderId)) currentFolder = "uncategorized";
+    folderManageDialog.close();
+    await loadFolders();
+    await loadMeetings($("#search").value);
+  } catch(err) {
+    const error = $("#folderManageError");
+    error.textContent = err.message;
+    error.classList.remove("hidden");
+  }
+};
+
 $("#logoutBtn").onclick=async()=>{ await fetch(apiUrl("/api/auth/logout"),{method:"POST",credentials:"include"}); location.replace("/login.html"); };
 
 (async function boot(){
@@ -275,5 +425,6 @@ $("#logoutBtn").onclick=async()=>{ await fetch(apiUrl("/api/auth/logout"),{metho
       }
     }
   } catch {}
+  await loadFolders();
   await loadMeetings();
 })();

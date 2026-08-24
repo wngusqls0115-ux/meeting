@@ -110,6 +110,12 @@ def init_db():
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS folders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS meetings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
@@ -119,7 +125,9 @@ def init_db():
             participants TEXT,
             source TEXT NOT NULL DEFAULT 'manual',
             created_at TEXT NOT NULL,
-            updated_at TEXT
+            updated_at TEXT,
+            folder_id INTEGER,
+            FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL
         );
 
         CREATE TABLE IF NOT EXISTS shares (
@@ -147,6 +155,8 @@ def init_db():
     columns = {r[1] for r in conn.execute("PRAGMA table_info(meetings)").fetchall()}
     if "updated_at" not in columns:
         conn.execute("ALTER TABLE meetings ADD COLUMN updated_at TEXT")
+    if "folder_id" not in columns:
+        conn.execute("ALTER TABLE meetings ADD COLUMN folder_id INTEGER")
     conn.commit()
 
     user_count = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
@@ -188,6 +198,10 @@ class AdminUserPatchIn(BaseModel):
     new_password: Optional[str] = None
 
 
+class FolderIn(BaseModel):
+    name: str
+
+
 class MeetingIn(BaseModel):
     title: str = Field(default="제목 없는 회의")
     recorded_at: Optional[str] = None
@@ -195,6 +209,7 @@ class MeetingIn(BaseModel):
     summary: Optional[str] = None
     participants: Optional[list[str] | str] = None
     source: str = "manual"
+    folder_id: Optional[int] = None
 
 
 class MeetingUpdate(BaseModel):
@@ -203,6 +218,7 @@ class MeetingUpdate(BaseModel):
     transcript: str
     summary: Optional[str] = None
     participants: Optional[list[str] | str] = None
+    folder_id: Optional[int] = None
 
 
 class ShareIn(BaseModel):
@@ -320,8 +336,8 @@ def create_meeting(payload: MeetingIn):
     conn = db()
     cur = conn.execute(
         """
-        INSERT INTO meetings(title, recorded_at, transcript, summary, participants, source, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO meetings(title, recorded_at, transcript, summary, participants, source, created_at, updated_at, folder_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             payload.title.strip() or "제목 없는 회의",
@@ -332,6 +348,7 @@ def create_meeting(payload: MeetingIn):
             payload.source,
             now,
             now,
+            payload.folder_id,
         ),
     )
     conn.commit()
@@ -343,7 +360,15 @@ def create_meeting(payload: MeetingIn):
 
 def get_original_meeting(meeting_id: int):
     conn = db()
-    row = conn.execute("SELECT * FROM meetings WHERE id=?", (meeting_id,)).fetchone()
+    row = conn.execute(
+        """
+        SELECT m.*, f.name AS folder_name
+        FROM meetings m
+        LEFT JOIN folders f ON f.id = m.folder_id
+        WHERE m.id=?
+        """,
+        (meeting_id,),
+    ).fetchone()
     conn.close()
     if not row:
         raise HTTPException(status_code=404, detail="Meeting not found")
@@ -646,37 +671,153 @@ def plaud_webhook(payload: MeetingIn, x_webhook_secret: Optional[str] = Header(d
     return create_meeting(payload)
 
 
+@app.get("/api/folders")
+def list_folders(user=Depends(require_user)):
+    conn = db()
+    rows = conn.execute(
+        """
+        SELECT f.id, f.name, f.created_at, COUNT(m.id) AS meeting_count
+        FROM folders f
+        LEFT JOIN meetings m ON m.folder_id = f.id
+        GROUP BY f.id, f.name, f.created_at
+        ORDER BY LOWER(f.name), f.id
+        """
+    ).fetchall()
+    total_count = conn.execute("SELECT COUNT(*) AS n FROM meetings").fetchone()["n"]
+    uncategorized_count = conn.execute(
+        "SELECT COUNT(*) AS n FROM meetings WHERE folder_id IS NULL"
+    ).fetchone()["n"]
+    conn.close()
+    return {
+        "folders": [
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "created_at": r["created_at"],
+                "meeting_count": r["meeting_count"],
+            }
+            for r in rows
+        ],
+        "total_count": total_count,
+        "uncategorized_count": uncategorized_count,
+    }
+
+
+@app.post("/api/folders")
+def create_folder(payload: FolderIn, user=Depends(require_user)):
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="폴더 이름을 입력해 주세요.")
+    if len(name) > 80:
+        raise HTTPException(status_code=400, detail="폴더 이름은 80자 이하로 입력해 주세요.")
+
+    conn = db()
+    try:
+        cur = conn.execute(
+            "INSERT INTO folders(name, created_at) VALUES (?, ?)",
+            (name, now_iso()),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.close()
+        raise HTTPException(status_code=409, detail="같은 이름의 폴더가 이미 있습니다.")
+
+    row = conn.execute("SELECT * FROM folders WHERE id=?", (cur.lastrowid,)).fetchone()
+    result = dict(row)
+    conn.close()
+    return result
+
+
+@app.patch("/api/folders/{folder_id}")
+def rename_folder(folder_id: int, payload: FolderIn, user=Depends(require_user)):
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="폴더 이름을 입력해 주세요.")
+
+    conn = db()
+    try:
+        cur = conn.execute("UPDATE folders SET name=? WHERE id=?", (name, folder_id))
+        if cur.rowcount == 0:
+            conn.close()
+            raise HTTPException(status_code=404, detail="폴더를 찾을 수 없습니다.")
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.close()
+        raise HTTPException(status_code=409, detail="같은 이름의 폴더가 이미 있습니다.")
+
+    row = conn.execute("SELECT * FROM folders WHERE id=?", (folder_id,)).fetchone()
+    result = dict(row)
+    conn.close()
+    return result
+
+
+@app.delete("/api/folders/{folder_id}")
+def delete_folder(folder_id: int, user=Depends(require_user)):
+    conn = db()
+    row = conn.execute("SELECT id FROM folders WHERE id=?", (folder_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="폴더를 찾을 수 없습니다.")
+
+    conn.execute("UPDATE meetings SET folder_id=NULL WHERE folder_id=?", (folder_id,))
+    conn.execute("DELETE FROM folders WHERE id=?", (folder_id,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 @app.post("/api/meetings")
 def add_meeting(payload: MeetingIn, user=Depends(require_user)):
     return create_meeting(payload)
 
 
 @app.get("/api/meetings")
-def list_meetings(q: str = "", user=Depends(require_user)):
+def list_meetings(q: str = "", folder: str = "all", user=Depends(require_user)):
     conn = db()
+    clauses = []
+    params = []
+
     if q.strip():
         like = f"%{q.strip()}%"
-        rows = conn.execute(
+        clauses.append(
             """
-            SELECT DISTINCT m.id, m.title, m.recorded_at, m.summary, m.participants, m.source, m.created_at
-            FROM meetings m
-            LEFT JOIN translations t ON t.meeting_id = m.id
-            WHERE m.title LIKE ? OR m.transcript LIKE ? OR COALESCE(m.summary,'') LIKE ?
-               OR COALESCE(t.translated_title,'') LIKE ? OR COALESCE(t.translated_transcript,'') LIKE ?
-               OR COALESCE(t.translated_summary,'') LIKE ?
-            ORDER BY COALESCE(m.recorded_at, m.created_at) DESC
-            """,
-            (like, like, like, like, like, like),
-        ).fetchall()
-    else:
-        rows = conn.execute(
+            (
+                m.title LIKE ? OR m.transcript LIKE ? OR COALESCE(m.summary,'') LIKE ?
+                OR COALESCE(t.translated_title,'') LIKE ?
+                OR COALESCE(t.translated_transcript,'') LIKE ?
+                OR COALESCE(t.translated_summary,'') LIKE ?
+            )
             """
-            SELECT id, title, recorded_at, summary, participants, source, created_at
-            FROM meetings
-            ORDER BY COALESCE(recorded_at, created_at) DESC
-            """
-        ).fetchall()
+        )
+        params.extend([like, like, like, like, like, like])
+
+    if folder == "uncategorized":
+        clauses.append("m.folder_id IS NULL")
+    elif folder not in {"", "all"}:
+        try:
+            folder_id = int(folder)
+        except ValueError:
+            conn.close()
+            raise HTTPException(status_code=400, detail="잘못된 폴더 필터입니다.")
+        clauses.append("m.folder_id=?")
+        params.append(folder_id)
+
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT
+            m.id, m.title, m.recorded_at, m.summary, m.participants, m.source,
+            m.created_at, m.folder_id, f.name AS folder_name
+        FROM meetings m
+        LEFT JOIN translations t ON t.meeting_id = m.id
+        LEFT JOIN folders f ON f.id = m.folder_id
+        {where}
+        ORDER BY COALESCE(m.recorded_at, m.created_at) DESC
+        """,
+        params,
+    ).fetchall()
     conn.close()
+
     result = []
     for r in rows:
         item = row_to_meeting(r)
@@ -716,7 +857,7 @@ def update_meeting(meeting_id: int, payload: MeetingUpdate, user=Depends(require
     conn.execute(
         """
         UPDATE meetings
-        SET title=?, recorded_at=?, transcript=?, summary=?, participants=?, updated_at=?
+        SET title=?, recorded_at=?, transcript=?, summary=?, participants=?, updated_at=?, folder_id=?
         WHERE id=?
         """,
         (
@@ -726,12 +867,21 @@ def update_meeting(meeting_id: int, payload: MeetingUpdate, user=Depends(require
             payload.summary,
             normalize_participants(payload.participants),
             now_iso(),
+            payload.folder_id,
             meeting_id,
         ),
     )
     conn.execute("DELETE FROM translations WHERE meeting_id=?", (meeting_id,))
     conn.commit()
-    row = conn.execute("SELECT * FROM meetings WHERE id=?", (meeting_id,)).fetchone()
+    row = conn.execute(
+        """
+        SELECT m.*, f.name AS folder_name
+        FROM meetings m
+        LEFT JOIN folders f ON f.id = m.folder_id
+        WHERE m.id=?
+        """,
+        (meeting_id,),
+    ).fetchone()
     conn.close()
     result = row_to_meeting(row)
     result["available_translations"] = []

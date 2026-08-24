@@ -108,3 +108,18 @@ label input,label textarea,label select{margin-top:7px;font-weight:400}
   font-size:13px;
   font-weight:600;
 }
+
+.folder-section{border-top:1px solid #edf0f4;border-bottom:1px solid #edf0f4;padding:12px 0}
+.folder-head{display:flex;justify-content:space-between;align-items:center;padding:0 4px 8px;font-size:13px;color:#5c6879}
+.folder-add-btn{width:27px;height:27px;border:1px solid #d9e0ea;border-radius:8px;background:#fff;color:#123f72;font-size:18px;line-height:1}
+.folder-list{display:flex;flex-direction:column;gap:3px;max-height:230px;overflow:auto}
+.folder-row{display:flex;align-items:center;border-radius:8px}
+.folder-row.active{background:#eef4fb}
+.folder-filter-btn{flex:1;min-width:0;border:0;background:transparent;display:flex;align-items:center;gap:7px;padding:8px;text-align:left}
+.folder-icon{font-size:13px}
+.folder-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.folder-count{font-size:11px;color:#8792a2;background:#f2f4f7;padding:2px 6px;border-radius:999px}
+.folder-menu-btn{border:0;background:transparent;font-size:18px;color:#7d8999;padding:4px 8px}
+.folder-manage-dialog{padding:24px;min-width:min(460px,92vw)}
+.folder-manage-actions{justify-content:space-between}
+.danger-button{border:1px solid #e2baba;background:#fff;color:#b03232;border-radius:10px;padding:10px 14px}
