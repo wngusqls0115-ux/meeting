@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: meeting-minutes-app
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+
+    envVars:
+      - key: DB_PATH
+        value: /app/data/meetings.db
+
+      - key: APP_ADMIN_EMAIL
+        sync: false
+      - key: APP_ADMIN_PASSWORD
+        sync: false
+      - key: APP_ADMIN_NAME
+        value: 관리자
+
+      - key: PLAUD_WEBHOOK_SECRET
+        sync: false
+
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_TRANSLATION_MODEL
+        value: gpt-5.6-luna
+
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: COOKIE_SAMESITE
+        value: lax
+
+    disk:
+      name: meeting-data
+      mountPath: /app/data
+      sizeGB: 1
