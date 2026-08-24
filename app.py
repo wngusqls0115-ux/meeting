@@ -14,8 +14,17 @@ import urllib.error
 import hashlib
 import hmac
 
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except ImportError:
+    psycopg = None
+    dict_row = None
+
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "meetings.db")))
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+USE_POSTGRES = bool(DATABASE_URL)
 WEBHOOK_SECRET = os.getenv("PLAUD_WEBHOOK_SECRET", "change-me")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_TRANSLATION_MODEL = os.getenv("OPENAI_TRANSLATION_MODEL", "gpt-5.6-luna")
@@ -57,11 +66,77 @@ LANGUAGES = {
 }
 
 
+class PgCursorProxy:
+    def __init__(self, cursor, lastrowid=None):
+        self._cursor = cursor
+        self.lastrowid = lastrowid
+
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount
+
+    def fetchone(self):
+        return self._cursor.fetchone()
+
+    def fetchall(self):
+        return self._cursor.fetchall()
+
+
+class PgConnectionProxy:
+    def __init__(self, conn):
+        self._conn = conn
+
+    def _convert_sql(self, sql: str) -> str:
+        # The app uses SQLite-style qmark parameters. PostgreSQL/psycopg uses %s.
+        return sql.replace("?", "%s")
+
+    def execute(self, sql, params=()):
+        converted = self._convert_sql(sql)
+        stripped = converted.lstrip().upper()
+        returning_id = False
+
+        # These inserts are the only places where current app code reads .lastrowid.
+        for table in ("MEETINGS", "USERS", "FOLDERS"):
+            if stripped.startswith(f"INSERT INTO {table}") and "RETURNING " not in stripped:
+                converted = converted.rstrip().rstrip(";") + " RETURNING id"
+                returning_id = True
+                break
+
+        cur = self._conn.cursor()
+        cur.execute(converted, tuple(params) if params is not None else ())
+        lastrowid = None
+        if returning_id:
+            returned = cur.fetchone()
+            if returned:
+                lastrowid = returned["id"]
+        return PgCursorProxy(cur, lastrowid=lastrowid)
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        self._conn.close()
+
+
 def db():
+    if USE_POSTGRES:
+        if psycopg is None:
+            raise RuntimeError("DATABASE_URL is set but psycopg is not installed")
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        return PgConnectionProxy(conn)
+
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+DB_INTEGRITY_ERRORS = (sqlite3.IntegrityError,)
+if psycopg is not None:
+    DB_INTEGRITY_ERRORS = DB_INTEGRITY_ERRORS + (psycopg.IntegrityError,)
 
 
 def now_iso():
@@ -89,75 +164,151 @@ def hash_session_token(token: str) -> str:
 
 def init_db():
     conn = db()
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT NOT NULL UNIQUE,
-            display_name TEXT,
-            password_salt TEXT NOT NULL,
-            password_hash TEXT NOT NULL,
-            is_active INTEGER NOT NULL DEFAULT 1,
-            is_admin INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL
-        );
 
-        CREATE TABLE IF NOT EXISTS sessions (
-            token_hash TEXT PRIMARY KEY,
-            user_id INTEGER NOT NULL,
-            expires_at TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-        );
+    if USE_POSTGRES:
+        statements = [
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id BIGSERIAL PRIMARY KEY,
+                email TEXT NOT NULL UNIQUE,
+                display_name TEXT,
+                password_salt TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                is_admin INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS folders (
+                id BIGSERIAL PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS meetings (
+                id BIGSERIAL PRIMARY KEY,
+                title TEXT NOT NULL,
+                recorded_at TEXT,
+                transcript TEXT NOT NULL,
+                summary TEXT,
+                participants TEXT,
+                source TEXT NOT NULL DEFAULT 'manual',
+                created_at TEXT NOT NULL,
+                updated_at TEXT,
+                folder_id BIGINT,
+                FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS shares (
+                token TEXT PRIMARY KEY,
+                meeting_id BIGINT NOT NULL,
+                expires_at TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(meeting_id) REFERENCES meetings(id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS translations (
+                id BIGSERIAL PRIMARY KEY,
+                meeting_id BIGINT NOT NULL,
+                language TEXT NOT NULL,
+                translated_title TEXT NOT NULL,
+                translated_summary TEXT,
+                translated_transcript TEXT NOT NULL,
+                model TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE(meeting_id, language),
+                FOREIGN KEY(meeting_id) REFERENCES meetings(id)
+            )
+            """,
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS updated_at TEXT",
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS folder_id BIGINT",
+        ]
+        for statement in statements:
+            conn.execute(statement)
+        conn.commit()
+    else:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL UNIQUE,
+                display_name TEXT,
+                password_salt TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                is_admin INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
 
-        CREATE TABLE IF NOT EXISTS folders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            created_at TEXT NOT NULL
-        );
+            CREATE TABLE IF NOT EXISTS sessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
 
-        CREATE TABLE IF NOT EXISTS meetings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            recorded_at TEXT,
-            transcript TEXT NOT NULL,
-            summary TEXT,
-            participants TEXT,
-            source TEXT NOT NULL DEFAULT 'manual',
-            created_at TEXT NOT NULL,
-            updated_at TEXT,
-            folder_id INTEGER,
-            FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL
-        );
+            CREATE TABLE IF NOT EXISTS folders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL
+            );
 
-        CREATE TABLE IF NOT EXISTS shares (
-            token TEXT PRIMARY KEY,
-            meeting_id INTEGER NOT NULL,
-            expires_at TEXT,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY(meeting_id) REFERENCES meetings(id)
-        );
+            CREATE TABLE IF NOT EXISTS meetings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                recorded_at TEXT,
+                transcript TEXT NOT NULL,
+                summary TEXT,
+                participants TEXT,
+                source TEXT NOT NULL DEFAULT 'manual',
+                created_at TEXT NOT NULL,
+                updated_at TEXT,
+                folder_id INTEGER,
+                FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL
+            );
 
-        CREATE TABLE IF NOT EXISTS translations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            meeting_id INTEGER NOT NULL,
-            language TEXT NOT NULL,
-            translated_title TEXT NOT NULL,
-            translated_summary TEXT,
-            translated_transcript TEXT NOT NULL,
-            model TEXT,
-            created_at TEXT NOT NULL,
-            UNIQUE(meeting_id, language),
-            FOREIGN KEY(meeting_id) REFERENCES meetings(id)
-        );
-        """
-    )
-    columns = {r[1] for r in conn.execute("PRAGMA table_info(meetings)").fetchall()}
-    if "updated_at" not in columns:
-        conn.execute("ALTER TABLE meetings ADD COLUMN updated_at TEXT")
-    if "folder_id" not in columns:
-        conn.execute("ALTER TABLE meetings ADD COLUMN folder_id INTEGER")
-    conn.commit()
+            CREATE TABLE IF NOT EXISTS shares (
+                token TEXT PRIMARY KEY,
+                meeting_id INTEGER NOT NULL,
+                expires_at TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(meeting_id) REFERENCES meetings(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS translations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                meeting_id INTEGER NOT NULL,
+                language TEXT NOT NULL,
+                translated_title TEXT NOT NULL,
+                translated_summary TEXT,
+                translated_transcript TEXT NOT NULL,
+                model TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE(meeting_id, language),
+                FOREIGN KEY(meeting_id) REFERENCES meetings(id)
+            );
+            """
+        )
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(meetings)").fetchall()}
+        if "updated_at" not in columns:
+            conn.execute("ALTER TABLE meetings ADD COLUMN updated_at TEXT")
+        if "folder_id" not in columns:
+            conn.execute("ALTER TABLE meetings ADD COLUMN folder_id INTEGER")
+        conn.commit()
 
     user_count = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
     if user_count == 0 and APP_ADMIN_EMAIL and APP_ADMIN_PASSWORD:
@@ -170,6 +321,7 @@ def init_db():
             (APP_ADMIN_EMAIL, APP_ADMIN_NAME, salt_hex, password_hex, now_iso()),
         )
         conn.commit()
+
     conn.close()
 
 
@@ -513,6 +665,8 @@ def health():
         "translation_model": OPENAI_TRANSLATION_MODEL,
         "cookie_secure": COOKIE_SECURE,
         "cookie_samesite": COOKIE_SAMESITE,
+        "storage_backend": "postgresql" if USE_POSTGRES else "sqlite_ephemeral",
+        "persistent_storage": bool(USE_POSTGRES),
     }
 
 
@@ -615,7 +769,7 @@ def admin_create_user(payload: AdminUserCreateIn, admin=Depends(require_admin)):
             (email, (payload.display_name or "").strip() or None, salt_hex, password_hex, now_iso()),
         )
         conn.commit()
-    except sqlite3.IntegrityError:
+    except DB_INTEGRITY_ERRORS:
         conn.close()
         raise HTTPException(status_code=409, detail="이미 등록된 이메일입니다.")
     row = conn.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone()
@@ -718,7 +872,7 @@ def create_folder(payload: FolderIn, user=Depends(require_user)):
             (name, now_iso()),
         )
         conn.commit()
-    except sqlite3.IntegrityError:
+    except DB_INTEGRITY_ERRORS:
         conn.close()
         raise HTTPException(status_code=409, detail="같은 이름의 폴더가 이미 있습니다.")
 
@@ -741,7 +895,7 @@ def rename_folder(folder_id: int, payload: FolderIn, user=Depends(require_user))
             conn.close()
             raise HTTPException(status_code=404, detail="폴더를 찾을 수 없습니다.")
         conn.commit()
-    except sqlite3.IntegrityError:
+    except DB_INTEGRITY_ERRORS:
         conn.close()
         raise HTTPException(status_code=409, detail="같은 이름의 폴더가 이미 있습니다.")
 

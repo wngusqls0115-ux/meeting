@@ -199,6 +199,10 @@ $$(".lang-btn").forEach(btn=>btn.addEventListener("click",()=>switchLanguage(btn
 
 function openImport(){
   $("#importForm").reset();
+  $("#importStatus").classList.add("hidden");
+  $("#importStatus").textContent = "";
+  $("#importSaveBtn").disabled = false;
+  $("#importSaveBtn").textContent = "저장";
   populateFolderSelects();
   if(currentFolder !== "all" && currentFolder !== "uncategorized"){
     $("#importFolder").value = String(currentFolder);
@@ -208,9 +212,42 @@ function openImport(){
 $("#newBtn").onclick=openImport; $("#emptyNewBtn").onclick=openImport; $("#closeImport").onclick=()=>importDialog.close(); $("#cancelImport").onclick=()=>importDialog.close();
 $("#fileInput").addEventListener("change",async(e)=>{ const f=e.target.files?.[0]; if(!f) return; $("#importTranscript").value=await f.text(); if(!$("#importTitle").value) $("#importTitle").value=f.name.replace(/\.(txt|srt|md)$/i,""); });
 $("#importForm").addEventListener("submit",async(e)=>{
-  e.preventDefault(); const transcript=$("#importTranscript").value.trim(); if(!transcript) return alert("전사 내용 또는 전사 파일이 필요합니다.");
-  const m=await api("/api/meetings",{method:"POST",body:JSON.stringify({title:$("#importTitle").value.trim(),recorded_at:$("#importDate").value||null,transcript,summary:$("#importSummary").value.trim()||null,source:"manual",folder_id:$("#importFolder").value?Number($("#importFolder").value):null})});
-  importDialog.close(); await loadMeetings(); await openMeeting(m.id,"ko");
+  e.preventDefault();
+  const transcript=$("#importTranscript").value.trim();
+  if(!transcript) return alert("전사 내용 또는 전사 파일이 필요합니다.");
+
+  const status=$("#importStatus");
+  const saveBtn=$("#importSaveBtn");
+  status.textContent="저장 중...";
+  status.className="save-status saving";
+  saveBtn.disabled=true;
+  saveBtn.textContent="저장 중...";
+
+  try {
+    const m=await api("/api/meetings",{
+      method:"POST",
+      body:JSON.stringify({
+        title:$("#importTitle").value.trim(),
+        recorded_at:$("#importDate").value||null,
+        transcript,
+        summary:$("#importSummary").value.trim()||null,
+        source:"manual",
+        folder_id:$("#importFolder").value?Number($("#importFolder").value):null
+      })
+    });
+
+    status.textContent="저장 완료";
+    status.className="save-status success";
+    await loadFolders();
+    await loadMeetings();
+    await openMeeting(m.id,"ko");
+    setTimeout(()=>importDialog.close(),350);
+  } catch(err) {
+    status.textContent="저장 실패: " + err.message;
+    status.className="save-status error";
+    saveBtn.disabled=false;
+    saveBtn.textContent="다시 저장";
+  }
 });
 
 $("#editBtn").onclick=async()=>{
@@ -418,6 +455,9 @@ $("#logoutBtn").onclick=async()=>{ await fetch(apiUrl("/api/auth/logout"),{metho
     if(h.ok){
       const health = await h.json();
       translationConfigured = !!health.translation_configured;
+      if(health.storage_backend){
+        console.info("Meeting storage backend:", health.storage_backend);
+      }
       if(!translationConfigured){
         const notice = $("#translationNotice");
         notice.textContent = "현재 무료 테스트 모드에서는 영어·일본어 자동 번역이 비활성화되어 있습니다.";
