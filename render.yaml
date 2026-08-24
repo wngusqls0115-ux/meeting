@@ -2,14 +2,11 @@ services:
   - type: web
     name: meeting-minutes-app
     runtime: docker
-    plan: starter
+    plan: free
     healthCheckPath: /api/health
     autoDeployTrigger: commit
 
     envVars:
-      - key: DB_PATH
-        value: /app/data/meetings.db
-
       - key: APP_ADMIN_EMAIL
         sync: false
       - key: APP_ADMIN_PASSWORD
@@ -29,8 +26,3 @@ services:
         value: "true"
       - key: COOKIE_SAMESITE
         value: lax
-
-    disk:
-      name: meeting-data
-      mountPath: /app/data
-      sizeGB: 1

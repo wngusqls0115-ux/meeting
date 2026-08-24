@@ -1,3 +1,9 @@
+# CURRENT MODE: RENDER FREE TEST
+
+This package intentionally does NOT use a persistent disk.
+SQLite data may be lost when the Render instance is recreated/redeployed.
+Use only for public-link/authentication/functionality verification.
+
 # Deployment checklist
 
 ## Required environment variables
