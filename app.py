@@ -13,6 +13,7 @@ import urllib.request
 import urllib.error
 import hashlib
 import hmac
+import re
 
 try:
     import psycopg
@@ -192,7 +193,10 @@ def init_db():
             CREATE TABLE IF NOT EXISTS folders (
                 id BIGSERIAL PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
-                created_at TEXT NOT NULL
+                parent_id BIGINT,
+                color TEXT NOT NULL DEFAULT '#4F6B8A',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(parent_id) REFERENCES folders(id) ON DELETE SET NULL
             )
             """,
             """
@@ -207,6 +211,7 @@ def init_db():
                 created_at TEXT NOT NULL,
                 updated_at TEXT,
                 folder_id BIGINT,
+                author TEXT,
                 FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL
             )
             """,
@@ -235,6 +240,9 @@ def init_db():
             """,
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS updated_at TEXT",
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS folder_id BIGINT",
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS author TEXT",
+            "ALTER TABLE folders ADD COLUMN IF NOT EXISTS parent_id BIGINT",
+            "ALTER TABLE folders ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT '#4F6B8A'",
         ]
         for statement in statements:
             conn.execute(statement)
@@ -264,7 +272,10 @@ def init_db():
             CREATE TABLE IF NOT EXISTS folders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
-                created_at TEXT NOT NULL
+                parent_id INTEGER,
+                color TEXT NOT NULL DEFAULT '#4F6B8A',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(parent_id) REFERENCES folders(id) ON DELETE SET NULL
             );
 
             CREATE TABLE IF NOT EXISTS meetings (
@@ -278,6 +289,7 @@ def init_db():
                 created_at TEXT NOT NULL,
                 updated_at TEXT,
                 folder_id INTEGER,
+                author TEXT,
                 FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL
             );
 
@@ -308,6 +320,14 @@ def init_db():
             conn.execute("ALTER TABLE meetings ADD COLUMN updated_at TEXT")
         if "folder_id" not in columns:
             conn.execute("ALTER TABLE meetings ADD COLUMN folder_id INTEGER")
+        if "author" not in columns:
+            conn.execute("ALTER TABLE meetings ADD COLUMN author TEXT")
+
+        folder_columns = {r[1] for r in conn.execute("PRAGMA table_info(folders)").fetchall()}
+        if "parent_id" not in folder_columns:
+            conn.execute("ALTER TABLE folders ADD COLUMN parent_id INTEGER")
+        if "color" not in folder_columns:
+            conn.execute("ALTER TABLE folders ADD COLUMN color TEXT NOT NULL DEFAULT '#4F6B8A'")
         conn.commit()
 
     user_count = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
@@ -352,6 +372,8 @@ class AdminUserPatchIn(BaseModel):
 
 class FolderIn(BaseModel):
     name: str
+    parent_id: Optional[int] = None
+    color: str = "#4F6B8A"
 
 
 class MeetingFolderMoveIn(BaseModel):
@@ -366,6 +388,7 @@ class MeetingIn(BaseModel):
     participants: Optional[list[str] | str] = None
     source: str = "manual"
     folder_id: Optional[int] = None
+    author: Optional[str] = None
 
 
 class MeetingUpdate(BaseModel):
@@ -375,6 +398,7 @@ class MeetingUpdate(BaseModel):
     summary: Optional[str] = None
     participants: Optional[list[str] | str] = None
     folder_id: Optional[int] = None
+    author: Optional[str] = None
 
 
 class ShareIn(BaseModel):
@@ -487,6 +511,43 @@ def require_admin(user=Depends(require_user)):
     return user
 
 
+def normalize_folder_color(value: str | None) -> str:
+    color = (value or "#4F6B8A").strip().upper()
+    if not re.fullmatch(r"#[0-9A-F]{6}", color):
+        raise HTTPException(status_code=400, detail="폴더 색상은 #RRGGBB 형식이어야 합니다.")
+    return color
+
+
+def validate_folder_parent(conn, folder_id: int | None, parent_id: int | None):
+    if parent_id is None:
+        return
+    if folder_id is not None and int(parent_id) == int(folder_id):
+        raise HTTPException(status_code=400, detail="폴더 자신을 상위 폴더로 지정할 수 없습니다.")
+
+    parent = conn.execute("SELECT id, parent_id FROM folders WHERE id=?", (parent_id,)).fetchone()
+    if not parent:
+        raise HTTPException(status_code=404, detail="상위 폴더를 찾을 수 없습니다.")
+
+    # Cycle guard when an existing folder's parent is changed.
+    if folder_id is not None:
+        seen = set()
+        current = parent
+        while current:
+            current_id = int(current["id"])
+            if current_id == int(folder_id):
+                raise HTTPException(status_code=400, detail="하위 폴더를 상위 폴더로 지정할 수 없습니다.")
+            if current_id in seen:
+                break
+            seen.add(current_id)
+            next_id = current["parent_id"]
+            if next_id is None:
+                break
+            current = conn.execute(
+                "SELECT id, parent_id FROM folders WHERE id=?",
+                (next_id,),
+            ).fetchone()
+
+
 def create_meeting(payload: MeetingIn):
     now = now_iso()
     conn = db()
@@ -495,9 +556,9 @@ def create_meeting(payload: MeetingIn):
             """
             INSERT INTO meetings(
                 title, recorded_at, transcript, summary, participants,
-                source, created_at, updated_at, folder_id
+                source, created_at, updated_at, folder_id, author
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.title.strip() or "제목 없는 회의",
@@ -509,6 +570,7 @@ def create_meeting(payload: MeetingIn):
                 now,
                 now,
                 payload.folder_id,
+                (payload.author or "").strip() or None,
             ),
         )
         conn.commit()
@@ -548,7 +610,7 @@ def get_original_meeting(meeting_id: int):
     conn = db()
     row = conn.execute(
         """
-        SELECT m.*, f.name AS folder_name
+        SELECT m.*, f.name AS folder_name, f.color AS folder_color
         FROM meetings m
         LEFT JOIN folders f ON f.id = m.folder_id
         WHERE m.id=?
@@ -882,10 +944,12 @@ def list_folders(user=Depends(require_user)):
     conn = db()
     rows = conn.execute(
         """
-        SELECT f.id, f.name, f.created_at, COUNT(m.id) AS meeting_count
+        SELECT
+            f.id, f.name, f.parent_id, f.color, f.created_at,
+            COUNT(m.id) AS meeting_count
         FROM folders f
         LEFT JOIN meetings m ON m.folder_id = f.id
-        GROUP BY f.id, f.name, f.created_at
+        GROUP BY f.id, f.name, f.parent_id, f.color, f.created_at
         ORDER BY LOWER(f.name), f.id
         """
     ).fetchall()
@@ -899,6 +963,8 @@ def list_folders(user=Depends(require_user)):
             {
                 "id": r["id"],
                 "name": r["name"],
+                "parent_id": r["parent_id"],
+                "color": r["color"] or "#4F6B8A",
                 "created_at": r["created_at"],
                 "meeting_count": r["meeting_count"],
             }
@@ -917,14 +983,18 @@ def create_folder(payload: FolderIn, user=Depends(require_user)):
     if len(name) > 80:
         raise HTTPException(status_code=400, detail="폴더 이름은 80자 이하로 입력해 주세요.")
 
+    color = normalize_folder_color(payload.color)
     conn = db()
+    validate_folder_parent(conn, None, payload.parent_id)
+
     try:
         cur = conn.execute(
-            "INSERT INTO folders(name, created_at) VALUES (?, ?)",
-            (name, now_iso()),
+            "INSERT INTO folders(name, parent_id, color, created_at) VALUES (?, ?, ?, ?)",
+            (name, payload.parent_id, color, now_iso()),
         )
         conn.commit()
     except DB_INTEGRITY_ERRORS:
+        conn.rollback()
         conn.close()
         raise HTTPException(status_code=409, detail="같은 이름의 폴더가 이미 있습니다.")
 
@@ -935,19 +1005,33 @@ def create_folder(payload: FolderIn, user=Depends(require_user)):
 
 
 @app.patch("/api/folders/{folder_id}")
-def rename_folder(folder_id: int, payload: FolderIn, user=Depends(require_user)):
+def update_folder(folder_id: int, payload: FolderIn, user=Depends(require_user)):
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="폴더 이름을 입력해 주세요.")
+    if len(name) > 80:
+        raise HTTPException(status_code=400, detail="폴더 이름은 80자 이하로 입력해 주세요.")
 
+    color = normalize_folder_color(payload.color)
     conn = db()
+    existing = conn.execute(
+        "SELECT id FROM folders WHERE id=?",
+        (folder_id,),
+    ).fetchone()
+    if not existing:
+        conn.close()
+        raise HTTPException(status_code=404, detail="폴더를 찾을 수 없습니다.")
+
+    validate_folder_parent(conn, folder_id, payload.parent_id)
+
     try:
-        cur = conn.execute("UPDATE folders SET name=? WHERE id=?", (name, folder_id))
-        if cur.rowcount == 0:
-            conn.close()
-            raise HTTPException(status_code=404, detail="폴더를 찾을 수 없습니다.")
+        conn.execute(
+            "UPDATE folders SET name=?, parent_id=?, color=? WHERE id=?",
+            (name, payload.parent_id, color, folder_id),
+        )
         conn.commit()
     except DB_INTEGRITY_ERRORS:
+        conn.rollback()
         conn.close()
         raise HTTPException(status_code=409, detail="같은 이름의 폴더가 이미 있습니다.")
 
@@ -960,26 +1044,38 @@ def rename_folder(folder_id: int, payload: FolderIn, user=Depends(require_user))
 @app.delete("/api/folders/{folder_id}")
 def delete_folder(folder_id: int, user=Depends(require_user)):
     conn = db()
-    row = conn.execute("SELECT id, name FROM folders WHERE id=?", (folder_id,)).fetchone()
+    row = conn.execute(
+        "SELECT id, name, parent_id FROM folders WHERE id=?",
+        (folder_id,),
+    ).fetchone()
     if not row:
         conn.close()
         raise HTTPException(status_code=404, detail="폴더를 찾을 수 없습니다.")
 
-    count_row = conn.execute(
+    parent_id = row["parent_id"]
+    meeting_count = conn.execute(
         "SELECT COUNT(*) AS n FROM meetings WHERE folder_id=?",
         (folder_id,),
-    ).fetchone()
-    moved_count = count_row["n"] if count_row else 0
+    ).fetchone()["n"]
+    child_count = conn.execute(
+        "SELECT COUNT(*) AS n FROM folders WHERE parent_id=?",
+        (folder_id,),
+    ).fetchone()["n"]
 
-    conn.execute("UPDATE meetings SET folder_id=NULL WHERE folder_id=?", (folder_id,))
+    # Preserve content: meetings and child folders move one level up.
+    conn.execute("UPDATE meetings SET folder_id=? WHERE folder_id=?", (parent_id, folder_id))
+    conn.execute("UPDATE folders SET parent_id=? WHERE parent_id=?", (parent_id, folder_id))
     conn.execute("DELETE FROM folders WHERE id=?", (folder_id,))
     conn.commit()
     conn.close()
+
     return {
         "ok": True,
         "deleted_folder_id": folder_id,
         "deleted_folder_name": row["name"],
-        "moved_to_uncategorized": moved_count,
+        "moved_meetings": meeting_count,
+        "reparented_child_folders": child_count,
+        "destination_parent_id": parent_id,
     }
 
 
@@ -1000,6 +1096,8 @@ def storage_status(user=Depends(require_user)):
 
 @app.post("/api/meetings")
 def add_meeting(payload: MeetingIn, user=Depends(require_user)):
+    if not (payload.author or "").strip():
+        payload.author = (user.get("display_name") or user.get("email") or "").strip() or None
     return create_meeting(payload)
 
 
@@ -1056,7 +1154,9 @@ def list_meetings(q: str = "", folder: str = "all", user=Depends(require_user)):
             m.source,
             m.created_at,
             m.folder_id,
-            f.name AS folder_name
+            m.author,
+            f.name AS folder_name,
+            f.color AS folder_color
         FROM meetings m
         LEFT JOIN folders f ON f.id = m.folder_id
         {where}
@@ -1140,7 +1240,7 @@ def update_meeting(meeting_id: int, payload: MeetingUpdate, user=Depends(require
     conn.execute(
         """
         UPDATE meetings
-        SET title=?, recorded_at=?, transcript=?, summary=?, participants=?, updated_at=?, folder_id=?
+        SET title=?, recorded_at=?, transcript=?, summary=?, participants=?, updated_at=?, folder_id=?, author=?
         WHERE id=?
         """,
         (
@@ -1151,6 +1251,7 @@ def update_meeting(meeting_id: int, payload: MeetingUpdate, user=Depends(require
             normalize_participants(payload.participants),
             now_iso(),
             payload.folder_id,
+            (payload.author or "").strip() or None,
             meeting_id,
         ),
     )
@@ -1158,7 +1259,7 @@ def update_meeting(meeting_id: int, payload: MeetingUpdate, user=Depends(require
     conn.commit()
     row = conn.execute(
         """
-        SELECT m.*, f.name AS folder_name
+        SELECT m.*, f.name AS folder_name, f.color AS folder_color
         FROM meetings m
         LEFT JOIN folders f ON f.id = m.folder_id
         WHERE m.id=?

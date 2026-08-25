@@ -45,6 +45,7 @@ function saveImportDraft(){
     title: $("#importTitle")?.value || "",
     recorded_at: $("#importDate")?.value || "",
     folder_id: $("#importFolder")?.value || "",
+    author: $("#importAuthor")?.value || "",
     transcript: $("#importTranscript")?.value || "",
     summary: $("#importSummary")?.value || "",
     saved_at: new Date().toISOString()
@@ -73,6 +74,7 @@ function restoreImportDraft(){
 
     $("#importTitle").value = d.title || "";
     $("#importDate").value = d.recorded_at || "";
+    $("#importAuthor").value = d.author || currentUser?.display_name || currentUser?.email || "";
     $("#importTranscript").value = d.transcript || "";
     $("#importSummary").value = d.summary || "";
     populateFolderSelects();
@@ -212,18 +214,21 @@ function folderDisplayLabel(value){
 function renderFolders(data){
   folderListEl.innerHTML = "";
 
-  function addRow(label, value, count, deletable=false){
-    const row = document.createElement("div");
-    row.className = "folder-row" + (String(currentFolder) === String(value) ? " active" : "");
-    row.dataset.folderValue = String(value);
+  const folders = data.folders || [];
+  const children = new Map();
+  folders.forEach(f => {
+    const key = f.parent_id == null ? "root" : String(f.parent_id);
+    if(!children.has(key)) children.set(key, []);
+    children.get(key).push(f);
+  });
 
+  function addSystemRow(label, value, count, icon){
+    const row = document.createElement("div");
+    row.className = "folder-row system-folder" + (String(currentFolder) === String(value) ? " active" : "");
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "folder-filter-btn";
-    btn.innerHTML = `
-      <span class="folder-icon">${value === "all" ? "▦" : "📁"}</span>
-      <span class="folder-label">${escapeHtml(label)}</span>
-      <span class="folder-count">${Number(count || 0)}</span>`;
+    btn.innerHTML = `<span class="folder-icon">${icon}</span><span class="folder-label">${escapeHtml(label)}</span><span class="folder-count">${Number(count || 0)}</span>`;
     btn.onclick = async () => {
       currentFolder = value;
       currentMeetingId = null;
@@ -234,62 +239,189 @@ function renderFolders(data){
     };
     row.appendChild(btn);
 
-    // Folder rows are drop targets. "전체 회의" is only a view and not a destination.
-    if(value !== "all"){
+    if(value === "uncategorized"){
       row.classList.add("folder-drop-target");
-      row.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        row.classList.add("drag-over");
-      });
+      row.addEventListener("dragover", e => { e.preventDefault(); row.classList.add("drag-over"); });
       row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
-      row.addEventListener("drop", async (e) => {
+      row.addEventListener("drop", async e => {
         e.preventDefault();
         row.classList.remove("drag-over");
         const meetingId = Number(e.dataTransfer.getData("text/meeting-id"));
-        if(!meetingId) return;
-        const destination = value === "uncategorized" ? null : Number(value);
-        await moveMeetingToFolder(meetingId, destination, label);
+        if(meetingId) await moveMeetingToFolder(meetingId, null, "미분류");
       });
     }
-
-    if(deletable){
-      const del = document.createElement("button");
-      del.type = "button";
-      del.className = "folder-delete-btn";
-      del.title = `"${label}" 폴더 삭제`;
-      del.setAttribute("aria-label", `"${label}" 폴더 삭제`);
-      del.textContent = "×";
-      del.onclick = async (e) => {
-        e.stopPropagation();
-        await deleteFolderDirect(Number(value), label, Number(count || 0));
-      };
-      row.appendChild(del);
-    }
-
     folderListEl.appendChild(row);
   }
 
-  addRow("전체 회의", "all", data.total_count, false);
-  addRow("미분류", "uncategorized", data.uncategorized_count, false);
-  (data.folders || []).forEach(f => addRow(f.name, String(f.id), f.meeting_count, true));
+  function addFolderRow(f, depth){
+    const row = document.createElement("div");
+    row.className = "folder-row folder-drop-target" + (String(currentFolder) === String(f.id) ? " active" : "");
+    row.style.setProperty("--folder-depth", depth);
+    row.dataset.folderValue = String(f.id);
+
+    row.addEventListener("dragover", e => { e.preventDefault(); row.classList.add("drag-over"); });
+    row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
+    row.addEventListener("drop", async e => {
+      e.preventDefault();
+      row.classList.remove("drag-over");
+      const meetingId = Number(e.dataTransfer.getData("text/meeting-id"));
+      if(meetingId) await moveMeetingToFolder(meetingId, Number(f.id), f.name);
+    });
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "folder-filter-btn tree-folder-btn";
+    btn.style.paddingLeft = `${8 + depth * 16}px`;
+    btn.innerHTML = `
+      <span class="folder-color-dot" style="background:${escapeHtml(f.color || "#4F6B8A")}"></span>
+      <span class="folder-label">${escapeHtml(f.name)}</span>
+      <span class="folder-count">${Number(f.meeting_count || 0)}</span>`;
+    btn.onclick = async () => {
+      currentFolder = String(f.id);
+      currentMeetingId = null;
+      currentMeeting = null;
+      detailEl.classList.add("hidden");
+      renderFolders(data);
+      await loadMeetings($("#search").value);
+    };
+    row.appendChild(btn);
+
+    const color = document.createElement("input");
+    color.type = "color";
+    color.className = "folder-row-color";
+    color.value = f.color || "#4F6B8A";
+    color.title = `"${f.name}" 색상`;
+    color.onclick = e => e.stopPropagation();
+    color.onchange = async e => {
+      e.stopPropagation();
+      await updateFolderAppearance(f, e.target.value);
+    };
+    row.appendChild(color);
+
+    const child = document.createElement("button");
+    child.type = "button";
+    child.className = "folder-child-btn";
+    child.textContent = "+";
+    child.title = `"${f.name}" 아래 하위 폴더 추가`;
+    child.onclick = e => {
+      e.stopPropagation();
+      openFolderCreateForParent(f.id, f.color || "#4F6B8A");
+    };
+    row.appendChild(child);
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "folder-delete-btn";
+    del.textContent = "×";
+    del.title = `"${f.name}" 폴더 삭제`;
+    del.onclick = async e => {
+      e.stopPropagation();
+      await deleteFolderDirect(Number(f.id), f.name, Number(f.meeting_count || 0));
+    };
+    row.appendChild(del);
+
+    folderListEl.appendChild(row);
+
+    (children.get(String(f.id)) || []).forEach(c => addFolderRow(c, depth + 1));
+  }
+
+  addSystemRow("전체 회의", "all", data.total_count, "▦");
+  addSystemRow("미분류", "uncategorized", data.uncategorized_count, "○");
+  (children.get("root") || []).forEach(f => addFolderRow(f, 0));
+}
+
+function folderDepth(folderId){
+  let depth = 0;
+  let current = foldersCache.find(f => String(f.id) === String(folderId));
+  const seen = new Set();
+  while(current && current.parent_id != null && !seen.has(String(current.id))){
+    seen.add(String(current.id));
+    depth += 1;
+    current = foldersCache.find(f => String(f.id) === String(current.parent_id));
+  }
+  return depth;
+}
+
+function sortedFolderTree(){
+  const children = new Map();
+  foldersCache.forEach(f => {
+    const key = f.parent_id == null ? "root" : String(f.parent_id);
+    if(!children.has(key)) children.set(key, []);
+    children.get(key).push(f);
+  });
+  const out = [];
+  function walk(parentKey, depth){
+    (children.get(parentKey) || []).forEach(f => {
+      out.push({folder:f, depth});
+      walk(String(f.id), depth + 1);
+    });
+  }
+  walk("root", 0);
+  return out;
+}
+
+function openFolderCreateForParent(parentId=null, suggestedColor="#4F6B8A"){
+  $("#inlineFolderForm").classList.remove("hidden");
+  $("#folderInlineError").classList.add("hidden");
+  populateFolderParentSelect();
+  $("#inlineFolderParent").value = parentId == null ? "" : String(parentId);
+  $("#inlineFolderColor").value = suggestedColor || "#4F6B8A";
+  $("#inlineFolderName").focus();
+}
+
+function populateFolderParentSelect(){
+  const sel = $("#inlineFolderParent");
+  if(!sel) return;
+  const previous = sel.value;
+  sel.innerHTML = `<option value="">최상위 폴더</option>`;
+  sortedFolderTree().forEach(({folder, depth}) => {
+    const opt = document.createElement("option");
+    opt.value = String(folder.id);
+    opt.textContent = `${"— ".repeat(depth)}${folder.name}`;
+    sel.appendChild(opt);
+  });
+  if([...sel.options].some(o => o.value === previous)) sel.value = previous;
+}
+
+async function updateFolderAppearance(folder, color){
+  try {
+    await api(`/api/folders/${folder.id}`, {
+      method:"PATCH",
+      body:JSON.stringify({
+        name:folder.name,
+        parent_id:folder.parent_id,
+        color
+      })
+    });
+    await loadFolders();
+    if(currentMeeting && Number(currentMeeting.folder_id) === Number(folder.id)){
+      currentMeeting.folder_color = color;
+      renderMeeting(currentMeeting);
+    }
+    showToast(`"${folder.name}" 폴더 색상을 변경했습니다.`, "success");
+  } catch(err) {
+    showToast("폴더 색상 변경 실패: " + err.message, "error");
+  }
 }
 
 function populateFolderSelects(){
+  const tree = sortedFolderTree();
   ["#importFolder", "#editFolder", "#quickFolderSelect"].forEach(selector => {
     const sel = $(selector);
     if(!sel) return;
     const previous = sel.value;
     sel.innerHTML = `<option value="">미분류</option>`;
-    foldersCache.forEach(f => {
+    tree.forEach(({folder, depth}) => {
       const opt = document.createElement("option");
-      opt.value = String(f.id);
-      opt.textContent = f.name;
+      opt.value = String(folder.id);
+      opt.textContent = `${"— ".repeat(depth)}${folder.name}`;
       sel.appendChild(opt);
     });
     if([...sel.options].some(o => o.value === previous)){
       sel.value = previous;
     }
   });
+  populateFolderParentSelect();
 
   if(currentMeeting && $("#quickFolderSelect")){
     $("#quickFolderSelect").value = currentMeeting.folder_id ? String(currentMeeting.folder_id) : "";
@@ -302,16 +434,23 @@ async function createFolderInline(name){
 
   const error = $("#folderInlineError");
   error.classList.add("hidden");
+  const parentValue = $("#inlineFolderParent").value;
+  const parentId = parentValue ? Number(parentValue) : null;
+  const color = $("#inlineFolderColor").value || "#4F6B8A";
+
   try {
     const f = await api("/api/folders", {
       method:"POST",
-      body:JSON.stringify({name:cleanName})
+      body:JSON.stringify({
+        name:cleanName,
+        parent_id:parentId,
+        color
+      })
     });
     $("#inlineFolderName").value = "";
     $("#inlineFolderForm").classList.add("hidden");
     currentFolder = String(f.id);
-    await loadStorageStatus();
-  await loadFolders();
+    await loadFolders();
     await loadMeetings($("#search").value);
     showToast(`폴더 "${f.name}"를 만들었습니다.`, "success");
   } catch(err) {
@@ -321,18 +460,23 @@ async function createFolderInline(name){
 }
 
 async function deleteFolderDirect(folderId, folderName, meetingCount){
-  const message = meetingCount > 0
-    ? `"${folderName}" 폴더를 삭제할까요?\n폴더 안의 회의록 ${meetingCount}건은 삭제되지 않고 '미분류'로 이동합니다.`
-    : `"${folderName}" 폴더를 삭제할까요?`;
-
-  if(!confirm(message)) return;
+  const childCount = foldersCache.filter(f => Number(f.parent_id) === Number(folderId)).length;
+  const parts = [];
+  if(meetingCount > 0) parts.push(`회의록 ${meetingCount}건`);
+  if(childCount > 0) parts.push(`하위 폴더 ${childCount}개`);
+  const detail = parts.length ? `\n${parts.join(", ")}은 한 단계 위 폴더로 이동합니다.` : "";
+  if(!confirm(`"${folderName}" 폴더를 삭제할까요?${detail}`)) return;
 
   try {
     const result = await api(`/api/folders/${folderId}`, {method:"DELETE"});
-    if(String(currentFolder) === String(folderId)) currentFolder = "uncategorized";
+    if(String(currentFolder) === String(folderId)){
+      currentFolder = result.destination_parent_id == null ? "uncategorized" : String(result.destination_parent_id);
+    }
     if(currentMeeting && Number(currentMeeting.folder_id) === Number(folderId)){
-      currentMeeting.folder_id = null;
-      currentMeeting.folder_name = null;
+      currentMeeting.folder_id = result.destination_parent_id;
+      const parent = foldersCache.find(f => Number(f.id) === Number(result.destination_parent_id));
+      currentMeeting.folder_name = parent?.name || null;
+      currentMeeting.folder_color = parent?.color || null;
       renderMeeting(currentMeeting);
     }
     await loadFolders();
@@ -397,7 +541,7 @@ async function loadMeetings(q=""){
     btn.addEventListener("dragend", () => btn.classList.remove("dragging"));
     if(m.id===currentMeetingId) btn.classList.add("active");
     const badges=["ko",...(m.translations||[])].map(x=>`<span class="mini-lang">${x.toUpperCase()}</span>`).join("");
-    btn.innerHTML=`<strong>${escapeHtml(m.title)}</strong><span>${escapeHtml(fmtDate(m.recorded_at||m.created_at))}</span><small>${m.folder_name ? "📁 " + escapeHtml(m.folder_name) + " · " : ""}${escapeHtml(m.source||"")} ${badges}</small>`;
+    btn.innerHTML=`<strong>${escapeHtml(m.title)}</strong><span>${escapeHtml(fmtDate(m.recorded_at||m.created_at))}</span><small>${m.folder_name ? `<span class="folder-color-dot mini" style="background:${escapeHtml(m.folder_color||"#4F6B8A")}"></span>` + escapeHtml(m.folder_name) + " · " : ""}${m.author ? "작성자 " + escapeHtml(m.author) + " · " : ""}${escapeHtml(m.source||"")} ${badges}</small>`;
     btn.onclick=()=>openMeeting(m.id,"ko"); listEl.appendChild(btn);
   });
   emptyEl.classList.toggle("hidden", rows.length !== 0 || !!currentMeetingId);
@@ -412,7 +556,12 @@ async function openMeeting(id, lang="ko"){
 
 function renderMeeting(m){
   $("#title").textContent=m.title;
-  $("#meta").textContent=[m.folder_name ? "📁 "+m.folder_name : null,fmtDate(m.recorded_at||m.created_at),m.source].filter(Boolean).join(" · ");
+  $("#meta").innerHTML=[
+    m.folder_name ? `<span class="meta-folder"><span class="folder-color-dot" style="background:${escapeHtml(m.folder_color||"#4F6B8A")}"></span>${escapeHtml(m.folder_name)}</span>` : null,
+    m.author ? `작성자: ${escapeHtml(m.author)}` : null,
+    escapeHtml(fmtDate(m.recorded_at||m.created_at)),
+    escapeHtml(m.source||"")
+  ].filter(Boolean).join(" · ");
   $("#summary").textContent=m.summary||"요약이 등록되지 않았습니다.";
   $("#transcript").textContent=m.transcript;
   if($("#quickFolderSelect")){
@@ -465,6 +614,7 @@ function openImport(){
     $("#importSaveBtn").textContent = "저장";
   }
   populateFolderSelects();
+  $("#importAuthor").value = currentUser?.display_name || currentUser?.email || "";
   const restored = restoreImportDraft();
   if(!restored && currentFolder !== "all" && currentFolder !== "uncategorized"){
     $("#importFolder").value = String(currentFolder);
@@ -472,7 +622,7 @@ function openImport(){
   importDialog.showModal();
 }
 $("#newBtn").onclick=openImport; $("#emptyNewBtn").onclick=openImport; $("#closeImport").onclick=()=>{ saveImportDraft(); importDialog.close(); }; $("#cancelImport").onclick=()=>{ saveImportDraft(); importDialog.close(); };
-["#importTitle","#importDate","#importFolder","#importTranscript","#importSummary"].forEach(sel => {
+["#importTitle","#importDate","#importAuthor","#importFolder","#importTranscript","#importSummary"].forEach(sel => {
   const el = $(sel);
   if(el){
     el.addEventListener("input", scheduleImportDraft);
@@ -506,7 +656,8 @@ $("#importForm").addEventListener("submit",async(e)=>{
         transcript,
         summary:$("#importSummary").value.trim()||null,
         source:"manual",
-        folder_id:$("#importFolder").value ? Number($("#importFolder").value) : null
+        folder_id:$("#importFolder").value ? Number($("#importFolder").value) : null,
+        author:$("#importAuthor").value.trim() || null
       })
     });
 
@@ -570,12 +721,12 @@ $("#importForm").addEventListener("submit",async(e)=>{
 
 $("#editBtn").onclick=async()=>{
   if(!currentMeetingId) return; const m=await api(`/api/meetings/${currentMeetingId}?lang=ko`);
-  populateFolderSelects(); $("#editTitle").value=m.title||""; $("#editDate").value=toLocalInput(m.recorded_at); $("#editFolder").value=m.folder_id?String(m.folder_id):""; $("#editSummary").value=m.summary||""; $("#editTranscript").value=m.transcript||""; editDialog.showModal();
+  populateFolderSelects(); $("#editTitle").value=m.title||""; $("#editDate").value=toLocalInput(m.recorded_at); $("#editFolder").value=m.folder_id?String(m.folder_id):""; $("#editAuthor").value=m.author||""; $("#editSummary").value=m.summary||""; $("#editTranscript").value=m.transcript||""; editDialog.showModal();
 };
 $("#closeEdit").onclick=()=>editDialog.close(); $("#cancelEdit").onclick=()=>editDialog.close();
 $("#editForm").addEventListener("submit",async(e)=>{
   e.preventDefault();
-  const m=await api(`/api/meetings/${currentMeetingId}`,{method:"PUT",body:JSON.stringify({title:$("#editTitle").value.trim(),recorded_at:$("#editDate").value||null,summary:$("#editSummary").value.trim()||null,transcript:$("#editTranscript").value,participants:currentMeeting?.participants||null,folder_id:$("#editFolder").value?Number($("#editFolder").value):null})});
+  const m=await api(`/api/meetings/${currentMeetingId}`,{method:"PUT",body:JSON.stringify({title:$("#editTitle").value.trim(),recorded_at:$("#editDate").value||null,summary:$("#editSummary").value.trim()||null,transcript:$("#editTranscript").value,participants:currentMeeting?.participants||null,folder_id:$("#editFolder").value?Number($("#editFolder").value):null,author:$("#editAuthor").value.trim()||null})});
   editDialog.close(); await loadFolders(); await openMeeting(m.id,"ko");
 });
 
@@ -698,16 +849,18 @@ $("#createUserForm").addEventListener("submit", async (e) => {
 
 
 $("#showFolderCreateBtn").onclick = () => {
-  $("#inlineFolderForm").classList.toggle("hidden");
-  $("#folderInlineError").classList.add("hidden");
-  if(!$("#inlineFolderForm").classList.contains("hidden")){
-    $("#inlineFolderName").focus();
+  if($("#inlineFolderForm").classList.contains("hidden")){
+    openFolderCreateForParent(null, "#4F6B8A");
+  } else {
+    $("#inlineFolderForm").classList.add("hidden");
   }
 };
 
 $("#cancelInlineFolder").onclick = () => {
   $("#inlineFolderForm").classList.add("hidden");
   $("#inlineFolderName").value = "";
+  $("#inlineFolderParent").value = "";
+  $("#inlineFolderColor").value = "#4F6B8A";
   $("#folderInlineError").classList.add("hidden");
 };
 
