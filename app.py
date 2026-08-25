@@ -354,6 +354,10 @@ class FolderIn(BaseModel):
     name: str
 
 
+class MeetingFolderMoveIn(BaseModel):
+    folder_id: Optional[int] = None
+
+
 class MeetingIn(BaseModel):
     title: str = Field(default="제목 없는 회의")
     recorded_at: Optional[str] = None
@@ -908,16 +912,27 @@ def rename_folder(folder_id: int, payload: FolderIn, user=Depends(require_user))
 @app.delete("/api/folders/{folder_id}")
 def delete_folder(folder_id: int, user=Depends(require_user)):
     conn = db()
-    row = conn.execute("SELECT id FROM folders WHERE id=?", (folder_id,)).fetchone()
+    row = conn.execute("SELECT id, name FROM folders WHERE id=?", (folder_id,)).fetchone()
     if not row:
         conn.close()
         raise HTTPException(status_code=404, detail="폴더를 찾을 수 없습니다.")
+
+    count_row = conn.execute(
+        "SELECT COUNT(*) AS n FROM meetings WHERE folder_id=?",
+        (folder_id,),
+    ).fetchone()
+    moved_count = count_row["n"] if count_row else 0
 
     conn.execute("UPDATE meetings SET folder_id=NULL WHERE folder_id=?", (folder_id,))
     conn.execute("DELETE FROM folders WHERE id=?", (folder_id,))
     conn.commit()
     conn.close()
-    return {"ok": True}
+    return {
+        "ok": True,
+        "deleted_folder_id": folder_id,
+        "deleted_folder_name": row["name"],
+        "moved_to_uncategorized": moved_count,
+    }
 
 
 @app.post("/api/meetings")
@@ -1001,6 +1016,37 @@ def get_meeting(meeting_id: int, lang: str = Query(default="ko", pattern="^(ko|e
         "language": lang,
         "translation_model": translated.get("model"),
         "translation_created_at": translated.get("created_at"),
+    }
+
+
+@app.patch("/api/meetings/{meeting_id}/folder")
+def move_meeting_folder(meeting_id: int, payload: MeetingFolderMoveIn, user=Depends(require_user)):
+    get_original_meeting(meeting_id)
+
+    conn = db()
+    folder_name = None
+    if payload.folder_id is not None:
+        folder = conn.execute(
+            "SELECT id, name FROM folders WHERE id=?",
+            (payload.folder_id,),
+        ).fetchone()
+        if not folder:
+            conn.close()
+            raise HTTPException(status_code=404, detail="이동할 폴더를 찾을 수 없습니다.")
+        folder_name = folder["name"]
+
+    conn.execute(
+        "UPDATE meetings SET folder_id=?, updated_at=? WHERE id=?",
+        (payload.folder_id, now_iso(), meeting_id),
+    )
+    conn.commit()
+    conn.close()
+
+    return {
+        "ok": True,
+        "meeting_id": meeting_id,
+        "folder_id": payload.folder_id,
+        "folder_name": folder_name,
     }
 
 

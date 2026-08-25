@@ -4,7 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>회의록</title>
-  <link rel="stylesheet" href="/styles.css?v=20260824-postgres-v1"/>
+  <link rel="stylesheet" href="/styles.css?v=20260825-folder-simple-v1"/>
 </head>
 <body>
   <div id="appErrorBanner" class="app-error-banner hidden"></div>
@@ -24,8 +24,17 @@
       <section class="folder-section">
         <div class="folder-head">
           <strong>폴더</strong>
-          <button id="newFolderBtn" class="folder-add-btn" title="새 폴더">+</button>
+          <button id="showFolderCreateBtn" class="folder-add-btn" type="button" title="새 폴더">+ 새 폴더</button>
         </div>
+
+        <form id="inlineFolderForm" class="inline-folder-form hidden">
+          <input id="inlineFolderName" maxlength="80" placeholder="폴더 이름" autocomplete="off"/>
+          <button class="primary compact-btn" type="submit">추가</button>
+          <button id="cancelInlineFolder" class="secondary compact-btn" type="button">취소</button>
+        </form>
+
+        <div id="folderInlineError" class="folder-inline-error hidden"></div>
+        <div class="folder-help">회의록을 폴더 위로 끌어다 놓아 이동할 수 있습니다.</div>
         <div id="folderList" class="folder-list"></div>
       </section>
 
@@ -36,7 +45,17 @@
       <div id="empty" class="empty hidden"><h1>회의 기록을 한 곳에서</h1><p>PLAUD 전사본을 가져와 저장하고, 번역하고, 검색하고, 로그인 사용자끼리 공유할 수 있습니다.</p><button id="emptyNewBtn" class="primary">첫 회의 가져오기</button></div>
       <article id="detail" class="detail hidden">
         <header class="detail-head">
-          <div><div id="meta" class="meta"></div><h1 id="title"></h1></div>
+          <div class="detail-title-block">
+            <div id="meta" class="meta"></div>
+            <h1 id="title"></h1>
+            <div class="quick-folder-row">
+              <span>폴더</span>
+              <select id="quickFolderSelect" aria-label="회의록 폴더">
+                <option value="">미분류</option>
+              </select>
+              <span id="quickFolderStatus" class="quick-folder-status"></span>
+            </div>
+          </div>
           <div class="head-actions">
             <div class="language-switch" aria-label="언어 선택"><button class="lang-btn active" data-lang="ko">한국어</button><button class="lang-btn" data-lang="en">English</button><button class="lang-btn" data-lang="ja">日本語</button></div>
             <button id="editBtn" class="secondary">수정</button><button id="shareBtn" class="secondary">공유</button>
@@ -103,26 +122,9 @@
     <div id="adminUserList" class="admin-user-list"></div>
   </div></dialog>
 
-  <dialog id="folderDialog"><form id="folderForm" method="dialog">
-    <div class="dialog-head"><h2>새 폴더</h2><button type="button" class="icon" id="closeFolder">×</button></div>
-    <label>폴더 이름<input id="folderName" maxlength="80" required placeholder="예: 파일럿 설비"/></label>
-    <div id="folderError" class="form-error hidden"></div>
-    <div class="dialog-actions"><button type="button" class="secondary" id="cancelFolder">취소</button><button class="primary" type="submit">폴더 만들기</button></div>
-  </form></dialog>
 
-  <dialog id="folderManageDialog"><div class="folder-manage-dialog">
-    <div class="dialog-head"><h2>폴더 관리</h2><button type="button" class="icon" id="closeFolderManage">×</button></div>
-    <label>폴더 이름<input id="renameFolderName" maxlength="80"/></label>
-    <div id="folderManageError" class="form-error hidden"></div>
-    <div class="dialog-actions folder-manage-actions">
-      <button id="deleteFolderBtn" type="button" class="danger-button">폴더 삭제</button>
-      <button id="renameFolderBtn" type="button" class="primary">이름 변경</button>
-    </div>
-    <p class="dialog-note">폴더를 삭제해도 회의록은 삭제되지 않고 미분류로 이동합니다.</p>
-  </div></dialog>
-
-  <script src="/config.js?v=20260824-postgres-v1"></script>
-  <script src="/app.js?v=20260824-postgres-v1"></script>
+  <script src="/config.js?v=20260825-folder-simple-v1"></script>
+  <script src="/app.js?v=20260825-folder-simple-v1"></script>
   <script>
     setTimeout(() => {
       if (!window.MEETING_APP_LOADED) {

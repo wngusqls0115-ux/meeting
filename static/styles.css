@@ -128,3 +128,93 @@ label input,label textarea,label select{margin-top:7px;font-weight:400}
 .save-status.saving{background:#f4f6f9;color:#5f6b7a}
 .save-status.success{background:#edf8f0;color:#27733a;border:1px solid #cde9d3}
 .save-status.error{background:#fff0f0;color:#a52828;border:1px solid #f1caca}
+
+.folder-head{gap:8px}
+.folder-add-btn{
+  width:auto!important;
+  min-width:72px;
+  height:30px!important;
+  padding:0 9px;
+  font-size:12px!important;
+  font-weight:700;
+}
+.inline-folder-form{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto auto;
+  gap:6px;
+  margin:2px 0 9px;
+}
+.inline-folder-form input{padding:8px 9px}
+.compact-btn{padding:7px 9px;border-radius:8px;font-size:12px}
+.folder-help{font-size:10px;color:#98a2b1;padding:0 5px 7px;line-height:1.35}
+.folder-inline-error{
+  margin:0 0 8px;
+  padding:7px 9px;
+  border-radius:8px;
+  background:#fff0f0;
+  color:#a52828;
+  font-size:11px;
+}
+.folder-row{position:relative;border:1px solid transparent;transition:.12s ease}
+.folder-row:hover{background:#f6f8fb}
+.folder-row.active{background:#eef4fb;border-color:#d9e7f5}
+.folder-row.drag-over{
+  background:#e5f2ff;
+  border-color:#6ca3d8;
+  box-shadow:inset 0 0 0 1px #6ca3d8;
+}
+.folder-delete-btn{
+  flex:0 0 auto;
+  width:25px;
+  height:25px;
+  margin-right:4px;
+  border:0;
+  border-radius:7px;
+  background:transparent;
+  color:#a8b0bc;
+  font-size:18px;
+  line-height:1;
+}
+.folder-delete-btn:hover{background:#fff0f0;color:#b53737}
+.meeting-card[draggable="true"]{cursor:grab}
+.meeting-card.dragging{opacity:.45;cursor:grabbing}
+.quick-folder-row{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin-top:8px;
+  font-size:12px;
+  color:#748093;
+}
+.quick-folder-row select{
+  width:auto;
+  min-width:150px;
+  max-width:260px;
+  padding:6px 28px 6px 9px;
+  border-radius:8px;
+}
+.quick-folder-status{font-size:11px;color:#55718e}
+.app-toast{
+  position:fixed;
+  left:50%;
+  bottom:28px;
+  transform:translate(-50%,20px);
+  z-index:100000;
+  opacity:0;
+  pointer-events:none;
+  padding:10px 14px;
+  border-radius:10px;
+  box-shadow:0 10px 30px rgba(0,0,0,.18);
+  background:#172235;
+  color:#fff;
+  font-size:13px;
+  transition:.18s ease;
+}
+.app-toast.show{opacity:1;transform:translate(-50%,0)}
+.app-toast.success{background:#245f36}
+.app-toast.error{background:#9d3030}
+@media(max-width:800px){
+  .inline-folder-form{grid-template-columns:1fr auto}
+  .inline-folder-form .secondary{grid-column:1 / -1}
+  .quick-folder-row{flex-wrap:wrap}
+}
