@@ -360,3 +360,31 @@ label input,label textarea,label select{margin-top:7px;font-weight:400}
   color:#657184;
   font-size:12px;
 }
+
+.color-palette{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+  margin:10px 0 18px;
+}
+.color-choice{
+  display:grid;
+  grid-template-columns:22px 1fr auto;
+  align-items:center;
+  gap:9px;
+  min-height:42px;
+  padding:8px 10px;
+  border:1px solid #dde3eb;
+  border-radius:10px;
+  background:#fff;
+  color:#283547;
+  text-align:left;
+  cursor:pointer;
+}
+.color-choice:hover{background:#f7f9fc;border-color:#b8c5d4}
+.color-choice.selected{border-color:#2d4664;background:#f4f7fb;box-shadow:0 0 0 2px rgba(45,70,100,.12)}
+.color-choice-swatch{width:20px;height:20px;border-radius:6px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)}
+.color-choice-name{font-size:12px;font-weight:700}
+.color-choice-code{font-size:10px;color:#8a95a4;font-family:Consolas,monospace}
+.selected-color-text{margin:5px 0 8px;font-size:12px;font-weight:700;color:#4a596d}
+@media(max-width:680px){.color-palette{grid-template-columns:1fr}}

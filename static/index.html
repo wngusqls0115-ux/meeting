@@ -4,7 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>회의록</title>
-  <link rel="stylesheet" href="/styles.css?v=20260825-data-safe-folders-v2"/>
+  <link rel="stylesheet" href="/styles.css?v=20260825-rename-palette-fix-v1"/>
 </head>
 <body>
   <div id="appErrorBanner" class="app-error-banner hidden"></div>
@@ -29,7 +29,7 @@
         </div>
 
         <div id="folderInlineError" class="folder-inline-error hidden"></div>
-        <div class="folder-help">폴더의 + 버튼으로 하위 폴더를 추가하고, 회의록을 폴더 위로 끌어다 놓아 이동할 수 있습니다.</div>
+        <div class="folder-help">폴더의 + 버튼으로 하위 폴더를 추가하고, ✎ 버튼으로 이름을 수정합니다. 색상 버튼을 누르면 10개 기본색 중에서 선택합니다.</div>
         <div id="folderList" class="folder-list"></div>
       </section>
 
@@ -96,6 +96,7 @@
     <input id="folderCreateParentId" type="hidden"/>
     <label>폴더명<input id="folderCreateName" maxlength="80" required placeholder="예: HD 설비"/></label>
     <div class="palette-label">폴더 색상</div>
+    <div id="folderCreateSelectedColor" class="selected-color-text"></div>
     <div id="folderCreatePalette" class="color-palette" role="group" aria-label="폴더 색상 선택"></div>
     <div id="folderCreateError" class="form-error hidden"></div>
     <div class="dialog-actions"><button type="button" class="secondary" id="cancelFolderCreate">취소</button><button type="submit" class="primary">생성</button></div>
@@ -104,6 +105,7 @@
   <dialog id="folderColorDialog"><div class="folder-color-dialog">
     <div class="dialog-head"><h2>폴더 색상</h2><button type="button" class="icon" id="closeFolderColor">×</button></div>
     <div id="folderColorName" class="dialog-note"></div>
+    <div id="folderColorCurrent" class="selected-color-text"></div>
     <div id="folderColorPalette" class="color-palette" role="group" aria-label="폴더 색상 변경"></div>
   </div></dialog>
 
@@ -139,8 +141,8 @@
   </div></dialog>
 
 
-  <script src="/config.js?v=20260825-data-safe-folders-v2"></script>
-  <script src="/app.js?v=20260825-data-safe-folders-v2"></script>
+  <script src="/config.js?v=20260825-rename-palette-fix-v1"></script>
+  <script src="/app.js?v=20260825-rename-palette-fix-v1"></script>
   <script>
     setTimeout(() => {
       if (!window.MEETING_APP_LOADED) {

@@ -495,15 +495,21 @@ function sortedFolderTree(){
   return out;
 }
 
+function folderColorName(hex){
+  return FOLDER_COLORS.find(c => c.hex === hex)?.name || hex || "색상";
+}
+
 function renderPalette(container, selectedHex, onSelect){
   container.innerHTML = "";
   FOLDER_COLORS.forEach(item => {
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "color-swatch" + (item.hex === selectedHex ? " selected" : "");
-    btn.style.background = item.hex;
-    btn.title = item.name;
-    btn.setAttribute("aria-label", item.name);
+    btn.className = "color-choice" + (item.hex === selectedHex ? " selected" : "");
+    btn.title = `${item.name} · ${item.hex}`;
+    btn.innerHTML = `
+      <span class="color-choice-swatch" style="background:${item.hex}"></span>
+      <span class="color-choice-name">${escapeHtml(item.name)}</span>
+      <span class="color-choice-code">${item.hex}</span>`;
     btn.onclick = () => onSelect(item.hex);
     container.appendChild(btn);
   });
@@ -527,8 +533,10 @@ function openFolderCreateForParent(parentId=null){
   const selectCreateColor = (hex) => {
     folderCreateColor = hex;
     renderPalette($("#folderCreatePalette"), folderCreateColor, selectCreateColor);
+    $("#folderCreateSelectedColor").textContent = `${folderColorName(hex)} · ${hex}`;
   };
   renderPalette($("#folderCreatePalette"), folderCreateColor, selectCreateColor);
+  $("#folderCreateSelectedColor").textContent = `${folderColorName(folderCreateColor)} · ${folderCreateColor}`;
 
   $("#folderCreateDialog").showModal();
   setTimeout(() => $("#folderCreateName").focus(), 0);
@@ -537,11 +545,49 @@ function openFolderCreateForParent(parentId=null){
 function openFolderColorDialog(folder){
   folderColorTarget = folder;
   $("#folderColorName").textContent = folder.name;
-  renderPalette($("#folderColorPalette"), folder.color || "#536878", async (hex) => {
+  const currentHex = folder.color || "#536878";
+  $("#folderColorCurrent").textContent = `현재 색상: ${folderColorName(currentHex)} · ${currentHex}`;
+  renderPalette($("#folderColorPalette"), currentHex, async (hex) => {
+    $("#folderColorCurrent").textContent = `선택 색상: ${folderColorName(hex)} · ${hex}`;
     await updateFolderAppearance(folder, hex);
     $("#folderColorDialog").close();
   });
   $("#folderColorDialog").showModal();
+}
+
+
+async function renameFolderInline(folder){
+  const nextName = prompt("새 폴더명을 입력하세요.", folder.name);
+  if(nextName === null) return;
+
+  const cleanName = String(nextName || "").trim();
+  if(!cleanName){
+    showToast("폴더명은 비워둘 수 없습니다.", "error");
+    return;
+  }
+  if(cleanName === folder.name) return;
+
+  try {
+    const updated = await api(`/api/folders/${folder.id}`, {
+      method:"PATCH",
+      body:JSON.stringify({
+        name:cleanName,
+        parent_id:folder.parent_id ?? null,
+        color:folder.color || "#536878"
+      })
+    });
+
+    if(currentMeeting && Number(currentMeeting.folder_id) === Number(folder.id)){
+      currentMeeting.folder_name = updated.name;
+      renderMeeting(currentMeeting);
+    }
+
+    await loadFolders();
+    await loadMeetings($("#search").value);
+    showToast(`폴더명을 "${cleanName}"으로 변경했습니다.`, "success");
+  } catch(err) {
+    showToast("폴더명 변경 실패: " + err.message, "error");
+  }
 }
 
 async function updateFolderAppearance(folder, color){
