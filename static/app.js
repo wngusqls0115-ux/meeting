@@ -37,6 +37,85 @@ const emptyEl = $("#empty");
 const importDialog = $("#importDialog");
 const editDialog = $("#editDialog");
 const shareDialog = $("#shareDialog");
+const IMPORT_DRAFT_KEY = "meeting_import_draft_v1";
+let draftTimer = null;
+
+function saveImportDraft(){
+  const draft = {
+    title: $("#importTitle")?.value || "",
+    recorded_at: $("#importDate")?.value || "",
+    folder_id: $("#importFolder")?.value || "",
+    transcript: $("#importTranscript")?.value || "",
+    summary: $("#importSummary")?.value || "",
+    saved_at: new Date().toISOString()
+  };
+  try {
+    localStorage.setItem(IMPORT_DRAFT_KEY, JSON.stringify(draft));
+    const el = $("#draftStatus");
+    if(el && (draft.title || draft.transcript || draft.summary)){
+      el.textContent = "브라우저에 임시저장됨";
+      el.className = "draft-status";
+    }
+  } catch {}
+}
+
+function scheduleImportDraft(){
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(saveImportDraft, 350);
+}
+
+function restoreImportDraft(){
+  try {
+    const raw = localStorage.getItem(IMPORT_DRAFT_KEY);
+    if(!raw) return false;
+    const d = JSON.parse(raw);
+    if(!(d.title || d.transcript || d.summary)) return false;
+
+    $("#importTitle").value = d.title || "";
+    $("#importDate").value = d.recorded_at || "";
+    $("#importTranscript").value = d.transcript || "";
+    $("#importSummary").value = d.summary || "";
+    populateFolderSelects();
+    if(d.folder_id && [...$("#importFolder").options].some(o => o.value === String(d.folder_id))){
+      $("#importFolder").value = String(d.folder_id);
+    }
+
+    const el = $("#draftStatus");
+    el.textContent = "이전에 저장되지 않은 입력 내용을 복구했습니다.";
+    el.className = "draft-status restored";
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearImportDraft(){
+  try { localStorage.removeItem(IMPORT_DRAFT_KEY); } catch {}
+  const el = $("#draftStatus");
+  if(el){
+    el.textContent = "";
+    el.classList.add("hidden");
+  }
+}
+
+async function loadStorageStatus(){
+  const el = $("#storageStatus");
+  if(!el) return;
+  try {
+    const s = await api("/api/storage/status");
+    if(s.persistent){
+      el.textContent = `DB: PostgreSQL · 저장 ${s.meeting_count}건`;
+      el.className = "storage-status persistent";
+    } else {
+      el.textContent = `DB: SQLite 임시저장 · ${s.meeting_count}건`;
+      el.className = "storage-status ephemeral";
+    }
+  } catch(err) {
+    el.textContent = "DB 상태 확인 실패";
+    el.className = "storage-status error";
+  }
+}
+
 
 function loginUrl(){ return "/login.html?next=" + encodeURIComponent(location.pathname + location.search + location.hash); }
 
@@ -231,7 +310,8 @@ async function createFolderInline(name){
     $("#inlineFolderName").value = "";
     $("#inlineFolderForm").classList.add("hidden");
     currentFolder = String(f.id);
-    await loadFolders();
+    await loadStorageStatus();
+  await loadFolders();
     await loadMeetings($("#search").value);
     showToast(`폴더 "${f.name}"를 만들었습니다.`, "success");
   } catch(err) {
@@ -378,32 +458,47 @@ $$(".lang-btn").forEach(btn=>btn.addEventListener("click",()=>switchLanguage(btn
 
 function openImport(){
   $("#importForm").reset();
-  $("#importStatus").classList.add("hidden");
-  $("#importStatus").textContent = "";
-  $("#importSaveBtn").disabled = false;
-  $("#importSaveBtn").textContent = "저장";
+  $("#importStatus")?.classList.add("hidden");
+  if($("#importStatus")) $("#importStatus").textContent = "";
+  if($("#importSaveBtn")){
+    $("#importSaveBtn").disabled = false;
+    $("#importSaveBtn").textContent = "저장";
+  }
   populateFolderSelects();
-  if(currentFolder !== "all" && currentFolder !== "uncategorized"){
+  const restored = restoreImportDraft();
+  if(!restored && currentFolder !== "all" && currentFolder !== "uncategorized"){
     $("#importFolder").value = String(currentFolder);
   }
   importDialog.showModal();
 }
-$("#newBtn").onclick=openImport; $("#emptyNewBtn").onclick=openImport; $("#closeImport").onclick=()=>importDialog.close(); $("#cancelImport").onclick=()=>importDialog.close();
-$("#fileInput").addEventListener("change",async(e)=>{ const f=e.target.files?.[0]; if(!f) return; $("#importTranscript").value=await f.text(); if(!$("#importTitle").value) $("#importTitle").value=f.name.replace(/\.(txt|srt|md)$/i,""); });
+$("#newBtn").onclick=openImport; $("#emptyNewBtn").onclick=openImport; $("#closeImport").onclick=()=>{ saveImportDraft(); importDialog.close(); }; $("#cancelImport").onclick=()=>{ saveImportDraft(); importDialog.close(); };
+["#importTitle","#importDate","#importFolder","#importTranscript","#importSummary"].forEach(sel => {
+  const el = $(sel);
+  if(el){
+    el.addEventListener("input", scheduleImportDraft);
+    el.addEventListener("change", scheduleImportDraft);
+  }
+});
+
+$("#fileInput").addEventListener("change",async(e)=>{ const f=e.target.files?.[0]; if(!f) return; $("#importTranscript").value=await f.text(); if(!$("#importTitle").value) $("#importTitle").value=f.name.replace(/\.(txt|srt|md)$/i,""); scheduleImportDraft(); });
 $("#importForm").addEventListener("submit",async(e)=>{
   e.preventDefault();
-  const transcript=$("#importTranscript").value.trim();
+  const transcript = $("#importTranscript").value.trim();
   if(!transcript) return alert("전사 내용 또는 전사 파일이 필요합니다.");
 
-  const status=$("#importStatus");
-  const saveBtn=$("#importSaveBtn");
-  status.textContent="저장 중...";
-  status.className="save-status saving";
-  saveBtn.disabled=true;
-  saveBtn.textContent="저장 중...";
+  const status = $("#importStatus");
+  const saveBtn = $("#importSaveBtn");
+  if(status){
+    status.textContent = "1/3 서버에 저장 중...";
+    status.className = "save-status saving";
+  }
+  if(saveBtn){
+    saveBtn.disabled = true;
+    saveBtn.textContent = "저장 중...";
+  }
 
   try {
-    const m=await api("/api/meetings",{
+    const created = await api("/api/meetings", {
       method:"POST",
       body:JSON.stringify({
         title:$("#importTitle").value.trim(),
@@ -411,21 +506,65 @@ $("#importForm").addEventListener("submit",async(e)=>{
         transcript,
         summary:$("#importSummary").value.trim()||null,
         source:"manual",
-        folder_id:$("#importFolder").value?Number($("#importFolder").value):null
+        folder_id:$("#importFolder").value ? Number($("#importFolder").value) : null
       })
     });
 
-    status.textContent="저장 완료";
-    status.className="save-status success";
-    await loadFolders();
-    await loadMeetings();
-    await openMeeting(m.id,"ko");
-    setTimeout(()=>importDialog.close(),350);
+    if(!created?.id || created.saved !== true){
+      throw new Error("서버가 저장 완료 확인값을 반환하지 않았습니다.");
+    }
+
+    if(status){
+      status.textContent = `2/3 DB 저장 검증 중... (ID ${created.id})`;
+    }
+
+    // Read the same row back from DB before calling it saved.
+    const verified = await api(`/api/meetings/${created.id}?lang=ko`);
+    if(!verified || Number(verified.id) !== Number(created.id)){
+      throw new Error(`DB 재조회 검증 실패 (ID ${created.id})`);
+    }
+
+    clearImportDraft();
+
+    if(status){
+      status.textContent = `저장 확인 완료 · 회의 ID ${created.id}`;
+      status.className = "save-status success";
+    }
+
+    // Open the saved meeting first. List refresh may fail independently.
+    currentMeetingId = created.id;
+    currentLanguage = "ko";
+    currentMeeting = verified;
+    renderMeeting(verified);
+    emptyEl.classList.add("hidden");
+    detailEl.classList.remove("hidden");
+
+    let listRefreshOk = true;
+    try {
+      await loadFolders();
+      await loadMeetings($("#search").value);
+      await loadStorageStatus();
+    } catch(listErr) {
+      listRefreshOk = false;
+      console.error("List refresh after verified save failed:", listErr);
+    }
+
+    if(status && !listRefreshOk){
+      status.textContent = `저장은 DB에서 확인됨 · ID ${created.id} · 목록 갱신만 실패`;
+      status.className = "save-status warning";
+    }
+
+    setTimeout(()=>importDialog.close(), listRefreshOk ? 450 : 1400);
   } catch(err) {
-    status.textContent="저장 실패: " + err.message;
-    status.className="save-status error";
-    saveBtn.disabled=false;
-    saveBtn.textContent="다시 저장";
+    saveImportDraft();
+    if(status){
+      status.textContent = "저장 실패: " + err.message + " · 입력 내용은 브라우저에 임시저장했습니다.";
+      status.className = "save-status error";
+    }
+    if(saveBtn){
+      saveBtn.disabled = false;
+      saveBtn.textContent = "다시 저장";
+    }
   }
 });
 

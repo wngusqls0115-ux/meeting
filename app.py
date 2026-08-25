@@ -490,28 +490,58 @@ def require_admin(user=Depends(require_user)):
 def create_meeting(payload: MeetingIn):
     now = now_iso()
     conn = db()
-    cur = conn.execute(
-        """
-        INSERT INTO meetings(title, recorded_at, transcript, summary, participants, source, created_at, updated_at, folder_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            payload.title.strip() or "제목 없는 회의",
-            payload.recorded_at,
-            payload.transcript,
-            payload.summary,
-            normalize_participants(payload.participants),
-            payload.source,
-            now,
-            now,
-            payload.folder_id,
-        ),
-    )
-    conn.commit()
-    meeting_id = cur.lastrowid
-    row = conn.execute("SELECT * FROM meetings WHERE id=?", (meeting_id,)).fetchone()
-    conn.close()
-    return row_to_meeting(row)
+    try:
+        cur = conn.execute(
+            """
+            INSERT INTO meetings(
+                title, recorded_at, transcript, summary, participants,
+                source, created_at, updated_at, folder_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                payload.title.strip() or "제목 없는 회의",
+                payload.recorded_at,
+                payload.transcript,
+                payload.summary,
+                normalize_participants(payload.participants),
+                payload.source,
+                now,
+                now,
+                payload.folder_id,
+            ),
+        )
+        conn.commit()
+        meeting_id = cur.lastrowid
+
+        row = conn.execute(
+            """
+            SELECT m.*, f.name AS folder_name
+            FROM meetings m
+            LEFT JOIN folders f ON f.id = m.folder_id
+            WHERE m.id=?
+            """,
+            (meeting_id,),
+        ).fetchone()
+
+        if not row:
+            raise HTTPException(
+                status_code=500,
+                detail="회의록 INSERT 후 DB 재조회에 실패했습니다."
+            )
+
+        result = row_to_meeting(row)
+        result["saved"] = True
+        result["storage_backend"] = "postgresql" if USE_POSTGRES else "sqlite_ephemeral"
+        return result
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
 
 
 def get_original_meeting(meeting_id: int):
@@ -951,6 +981,21 @@ def delete_folder(folder_id: int, user=Depends(require_user)):
         "deleted_folder_name": row["name"],
         "moved_to_uncategorized": moved_count,
     }
+
+
+@app.get("/api/storage/status")
+def storage_status(user=Depends(require_user)):
+    conn = db()
+    try:
+        meeting_count = conn.execute("SELECT COUNT(*) AS n FROM meetings").fetchone()["n"]
+        return {
+            "ok": True,
+            "backend": "postgresql" if USE_POSTGRES else "sqlite_ephemeral",
+            "persistent": bool(USE_POSTGRES),
+            "meeting_count": meeting_count,
+        }
+    finally:
+        conn.close()
 
 
 @app.post("/api/meetings")
