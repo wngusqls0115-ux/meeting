@@ -12,6 +12,9 @@ services:
           name: meeting-minutes-db
           property: connectionString
 
+      - key: REQUIRE_PERSISTENT_DB
+        value: "true"
+
       - key: APP_ADMIN_EMAIL
         sync: false
       - key: APP_ADMIN_PASSWORD

@@ -26,6 +26,14 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "meetings.db")))
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 USE_POSTGRES = bool(DATABASE_URL)
+REQUIRE_PERSISTENT_DB = os.getenv("REQUIRE_PERSISTENT_DB", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+if REQUIRE_PERSISTENT_DB and not USE_POSTGRES:
+    raise RuntimeError(
+        "Persistent database is required but DATABASE_URL is missing. "
+        "Refusing to start with ephemeral SQLite to protect existing meeting data."
+    )
+
 WEBHOOK_SECRET = os.getenv("PLAUD_WEBHOOK_SECRET", "change-me")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_TRANSLATION_MODEL = os.getenv("OPENAI_TRANSLATION_MODEL", "gpt-5.6-luna")
@@ -59,6 +67,19 @@ async def disable_frontend_cache(request: Request, call_next):
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
     return response
+
+FOLDER_COLOR_PALETTE = {
+    "#536878",  # slate
+    "#64748B",  # blue gray
+    "#667761",  # sage
+    "#7A6F66",  # taupe
+    "#806A78",  # mauve
+    "#73765A",  # olive
+    "#756D91",  # muted purple
+    "#8A6B57",  # terracotta
+    "#5F777A",  # muted teal
+    "#867A59",  # muted ochre
+}
 
 LANGUAGES = {
     "ko": "Korean",
@@ -216,6 +237,20 @@ def init_db():
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS drafts (
+                user_id BIGINT PRIMARY KEY,
+                title TEXT,
+                recorded_at TEXT,
+                author TEXT,
+                folder_id BIGINT,
+                transcript TEXT,
+                summary TEXT,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS shares (
                 token TEXT PRIMARY KEY,
                 meeting_id BIGINT NOT NULL,
@@ -290,6 +325,19 @@ def init_db():
                 updated_at TEXT,
                 folder_id INTEGER,
                 author TEXT,
+                FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS drafts (
+                user_id INTEGER PRIMARY KEY,
+                title TEXT,
+                recorded_at TEXT,
+                author TEXT,
+                folder_id INTEGER,
+                transcript TEXT,
+                summary TEXT,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL
             );
 
@@ -378,6 +426,15 @@ class FolderIn(BaseModel):
 
 class MeetingFolderMoveIn(BaseModel):
     folder_id: Optional[int] = None
+
+
+class DraftIn(BaseModel):
+    title: Optional[str] = None
+    recorded_at: Optional[str] = None
+    author: Optional[str] = None
+    folder_id: Optional[int] = None
+    transcript: Optional[str] = None
+    summary: Optional[str] = None
 
 
 class MeetingIn(BaseModel):
@@ -512,10 +569,11 @@ def require_admin(user=Depends(require_user)):
 
 
 def normalize_folder_color(value: str | None) -> str:
-    color = (value or "#4F6B8A").strip().upper()
-    if not re.fullmatch(r"#[0-9A-F]{6}", color):
-        raise HTTPException(status_code=400, detail="폴더 색상은 #RRGGBB 형식이어야 합니다.")
+    color = (value or "#536878").strip().upper()
+    if color not in FOLDER_COLOR_PALETTE:
+        raise HTTPException(status_code=400, detail="허용된 10개 폴더 색상 중 하나를 선택해 주세요.")
     return color
+
 
 
 def validate_folder_parent(conn, folder_id: int | None, parent_id: int | None):
@@ -939,6 +997,72 @@ def plaud_webhook(payload: MeetingIn, x_webhook_secret: Optional[str] = Header(d
     return create_meeting(payload)
 
 
+@app.get("/api/drafts/current")
+def get_current_draft(user=Depends(require_user)):
+    conn = db()
+    row = conn.execute(
+        """
+        SELECT d.*, f.name AS folder_name
+        FROM drafts d
+        LEFT JOIN folders f ON f.id = d.folder_id
+        WHERE d.user_id=?
+        """,
+        (user["id"],),
+    ).fetchone()
+    conn.close()
+    return {"draft": dict(row) if row else None}
+
+
+@app.put("/api/drafts/current")
+def save_current_draft(payload: DraftIn, user=Depends(require_user)):
+    conn = db()
+    if payload.folder_id is not None:
+        folder = conn.execute("SELECT id FROM folders WHERE id=?", (payload.folder_id,)).fetchone()
+        if not folder:
+            conn.close()
+            raise HTTPException(status_code=404, detail="자동저장할 폴더를 찾을 수 없습니다.")
+
+    conn.execute(
+        """
+        INSERT INTO drafts(
+            user_id, title, recorded_at, author, folder_id, transcript, summary, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            title=excluded.title,
+            recorded_at=excluded.recorded_at,
+            author=excluded.author,
+            folder_id=excluded.folder_id,
+            transcript=excluded.transcript,
+            summary=excluded.summary,
+            updated_at=excluded.updated_at
+        """,
+        (
+            user["id"],
+            (payload.title or "").strip() or None,
+            payload.recorded_at,
+            (payload.author or "").strip() or None,
+            payload.folder_id,
+            payload.transcript or "",
+            payload.summary,
+            now_iso(),
+        ),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM drafts WHERE user_id=?", (user["id"],)).fetchone()
+    conn.close()
+    return {"ok": True, "draft": dict(row)}
+
+
+@app.delete("/api/drafts/current")
+def delete_current_draft(user=Depends(require_user)):
+    conn = db()
+    conn.execute("DELETE FROM drafts WHERE user_id=?", (user["id"],))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 @app.get("/api/folders")
 def list_folders(user=Depends(require_user)):
     conn = db()
@@ -1084,14 +1208,18 @@ def storage_status(user=Depends(require_user)):
     conn = db()
     try:
         meeting_count = conn.execute("SELECT COUNT(*) AS n FROM meetings").fetchone()["n"]
+        folder_count = conn.execute("SELECT COUNT(*) AS n FROM folders").fetchone()["n"]
         return {
             "ok": True,
             "backend": "postgresql" if USE_POSTGRES else "sqlite_ephemeral",
             "persistent": bool(USE_POSTGRES),
+            "persistent_required": REQUIRE_PERSISTENT_DB,
             "meeting_count": meeting_count,
+            "folder_count": folder_count,
         }
     finally:
         conn.close()
+
 
 
 @app.post("/api/meetings")

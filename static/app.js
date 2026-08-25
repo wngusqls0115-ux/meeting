@@ -25,6 +25,25 @@ let currentUser = null;
 let translationConfigured = true;
 let currentFolder = 'all';
 let foldersCache = [];
+let folderCreateParentId = null;
+let folderCreateColor = "#536878";
+let folderColorTarget = null;
+let editDirty = false;
+let autoSaveBusy = false;
+
+const AUTO_SAVE_INTERVAL_MS = 20 * 60 * 1000;
+const FOLDER_COLORS = [
+  {hex:"#536878", name:"슬레이트"},
+  {hex:"#64748B", name:"블루그레이"},
+  {hex:"#667761", name:"세이지"},
+  {hex:"#7A6F66", name:"토프"},
+  {hex:"#806A78", name:"모브"},
+  {hex:"#73765A", name:"올리브"},
+  {hex:"#756D91", name:"뮤트 퍼플"},
+  {hex:"#8A6B57", name:"테라코타"},
+  {hex:"#5F777A", name:"틸 그레이"},
+  {hex:"#867A59", name:"오커"}
+];
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -88,6 +107,105 @@ function restoreImportDraft(){
     return true;
   } catch {
     return false;
+  }
+}
+
+async function saveServerDraft(){
+  const transcript = $("#importTranscript")?.value || "";
+  const title = $("#importTitle")?.value || "";
+  const summary = $("#importSummary")?.value || "";
+  if(!(title.trim() || transcript.trim() || summary.trim())) return false;
+
+  const data = await api("/api/drafts/current", {
+    method:"PUT",
+    body:JSON.stringify({
+      title:title.trim() || null,
+      recorded_at:$("#importDate")?.value || null,
+      author:$("#importAuthor")?.value.trim() || null,
+      folder_id:$("#importFolder")?.value ? Number($("#importFolder").value) : null,
+      transcript,
+      summary:summary.trim() || null
+    })
+  });
+  return !!data.ok;
+}
+
+async function restoreServerDraft(){
+  try {
+    const data = await api("/api/drafts/current");
+    const d = data?.draft;
+    if(!d || !(d.title || d.transcript || d.summary)) return false;
+
+    $("#importTitle").value = d.title || "";
+    $("#importDate").value = d.recorded_at || "";
+    $("#importAuthor").value = d.author || currentUser?.display_name || currentUser?.email || "";
+    $("#importTranscript").value = d.transcript || "";
+    $("#importSummary").value = d.summary || "";
+    populateFolderSelects();
+    if(d.folder_id && [...$("#importFolder").options].some(o => o.value === String(d.folder_id))){
+      $("#importFolder").value = String(d.folder_id);
+    }
+    const el = $("#draftStatus");
+    el.textContent = `서버 자동저장 초안을 복구했습니다. (${new Date(d.updated_at).toLocaleString()})`;
+    el.className = "draft-status restored";
+    saveImportDraft();
+    return true;
+  } catch(err) {
+    console.warn("Server draft restore failed:", err);
+    return false;
+  }
+}
+
+async function deleteServerDraft(){
+  try { await api("/api/drafts/current", {method:"DELETE"}); } catch {}
+}
+
+async function autoSaveExistingEdit(){
+  if(!$("#editDialog")?.open || !currentMeetingId || !editDirty) return false;
+
+  const status = $("#editAutoSaveStatus");
+  status.textContent = "자동저장 중...";
+  try {
+    const m = await api(`/api/meetings/${currentMeetingId}`, {
+      method:"PUT",
+      body:JSON.stringify({
+        title:$("#editTitle").value.trim(),
+        recorded_at:$("#editDate").value||null,
+        summary:$("#editSummary").value.trim()||null,
+        transcript:$("#editTranscript").value,
+        participants:currentMeeting?.participants||null,
+        folder_id:$("#editFolder").value?Number($("#editFolder").value):null,
+        author:$("#editAuthor").value.trim()||null
+      })
+    });
+    currentMeeting = m;
+    editDirty = false;
+    status.textContent = `자동저장 완료 · ${new Date().toLocaleTimeString()}`;
+    await loadFolders();
+    await loadMeetings($("#search").value);
+    return true;
+  } catch(err) {
+    status.textContent = "자동저장 실패: " + err.message;
+    return false;
+  }
+}
+
+async function autoSaveTick(){
+  if(autoSaveBusy) return;
+  autoSaveBusy = true;
+  try {
+    if($("#importDialog")?.open){
+      saveImportDraft();
+      const ok = await saveServerDraft();
+      if(ok){
+        const el = $("#draftStatus");
+        el.textContent = `서버 자동저장 완료 · ${new Date().toLocaleTimeString()}`;
+        el.className = "draft-status";
+      }
+    }
+    await autoSaveExistingEdit();
+  } finally {
+    autoSaveBusy = false;
   }
 }
 
@@ -273,7 +391,7 @@ function renderFolders(data){
     btn.className = "folder-filter-btn tree-folder-btn";
     btn.style.paddingLeft = `${8 + depth * 16}px`;
     btn.innerHTML = `
-      <span class="folder-color-dot" style="background:${escapeHtml(f.color || "#4F6B8A")}"></span>
+      <span class="folder-color-dot" style="background:${escapeHtml(f.color || "#536878")}"></span>
       <span class="folder-label">${escapeHtml(f.name)}</span>
       <span class="folder-count">${Number(f.meeting_count || 0)}</span>`;
     btn.ondblclick = async (e) => {
@@ -303,15 +421,15 @@ function renderFolders(data){
     };
     row.appendChild(edit);
 
-    const color = document.createElement("input");
-    color.type = "color";
-    color.className = "folder-row-color";
-    color.value = f.color || "#4F6B8A";
-    color.title = `"${f.name}" 색상`;
-    color.onclick = e => e.stopPropagation();
-    color.onchange = async e => {
+    const color = document.createElement("button");
+    color.type = "button";
+    color.className = "folder-color-btn";
+    color.style.background = f.color || "#536878";
+    color.title = `"${f.name}" 색상 변경`;
+    color.setAttribute("aria-label", `"${f.name}" 색상 변경`);
+    color.onclick = e => {
       e.stopPropagation();
-      await updateFolderAppearance(f, e.target.value);
+      openFolderColorDialog(f);
     };
     row.appendChild(color);
 
@@ -322,7 +440,7 @@ function renderFolders(data){
     child.title = `"${f.name}" 아래 하위 폴더 추가`;
     child.onclick = e => {
       e.stopPropagation();
-      openFolderCreateForParent(f.id, f.color || "#4F6B8A");
+      openFolderCreateForParent(f.id);
     };
     row.appendChild(child);
 
@@ -377,61 +495,53 @@ function sortedFolderTree(){
   return out;
 }
 
-function openFolderCreateForParent(parentId=null, suggestedColor="#4F6B8A"){
-  $("#inlineFolderForm").classList.remove("hidden");
-  $("#folderInlineError").classList.add("hidden");
-  populateFolderParentSelect();
-  $("#inlineFolderParent").value = parentId == null ? "" : String(parentId);
-  $("#inlineFolderColor").value = suggestedColor || "#4F6B8A";
-  $("#inlineFolderName").focus();
-}
-
-function populateFolderParentSelect(){
-  const sel = $("#inlineFolderParent");
-  if(!sel) return;
-  const previous = sel.value;
-  sel.innerHTML = `<option value="">최상위 폴더</option>`;
-  sortedFolderTree().forEach(({folder, depth}) => {
-    const opt = document.createElement("option");
-    opt.value = String(folder.id);
-    opt.textContent = `${"— ".repeat(depth)}${folder.name}`;
-    sel.appendChild(opt);
+function renderPalette(container, selectedHex, onSelect){
+  container.innerHTML = "";
+  FOLDER_COLORS.forEach(item => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "color-swatch" + (item.hex === selectedHex ? " selected" : "");
+    btn.style.background = item.hex;
+    btn.title = item.name;
+    btn.setAttribute("aria-label", item.name);
+    btn.onclick = () => onSelect(item.hex);
+    container.appendChild(btn);
   });
-  if([...sel.options].some(o => o.value === previous)) sel.value = previous;
 }
 
-async function renameFolderInline(folder){
-  const nextName = prompt("새 폴더명을 입력하세요.", folder.name);
-  if(nextName === null) return;
+function openFolderCreateForParent(parentId=null){
+  folderCreateParentId = parentId == null ? null : Number(parentId);
+  const parent = foldersCache.find(f => Number(f.id) === Number(folderCreateParentId));
+  folderCreateColor = parent?.color && FOLDER_COLORS.some(c => c.hex === parent.color)
+    ? parent.color
+    : "#536878";
 
-  const cleanName = nextName.trim();
-  if(!cleanName){
-    showToast("폴더명은 비워둘 수 없습니다.", "error");
-    return;
-  }
-  if(cleanName === folder.name) return;
+  $("#folderCreateForm").reset();
+  $("#folderCreateParentId").value = folderCreateParentId == null ? "" : String(folderCreateParentId);
+  $("#folderCreateTitle").textContent = parent ? "하위 폴더 추가" : "새 폴더";
+  $("#folderCreateParentText").textContent = parent
+    ? `상위 폴더: ${parent.name}`
+    : "최상위 폴더로 생성합니다.";
+  $("#folderCreateError").classList.add("hidden");
 
-  try {
-    await api(`/api/folders/${folder.id}`, {
-      method:"PATCH",
-      body:JSON.stringify({
-        name:cleanName,
-        parent_id:folder.parent_id,
-        color:folder.color || "#4F6B8A"
-      })
-    });
+  const selectCreateColor = (hex) => {
+    folderCreateColor = hex;
+    renderPalette($("#folderCreatePalette"), folderCreateColor, selectCreateColor);
+  };
+  renderPalette($("#folderCreatePalette"), folderCreateColor, selectCreateColor);
 
-    if(currentMeeting && Number(currentMeeting.folder_id) === Number(folder.id)){
-      currentMeeting.folder_name = cleanName;
-      renderMeeting(currentMeeting);
-    }
+  $("#folderCreateDialog").showModal();
+  setTimeout(() => $("#folderCreateName").focus(), 0);
+}
 
-    await loadFolders();
-    await loadMeetings($("#search").value);
-    showToast(`폴더명을 "${cleanName}"으로 변경했습니다.`, "success");
-  } catch(err) {
-    showToast("폴더명 변경 실패: " + err.message, "error");
-  }
+function openFolderColorDialog(folder){
+  folderColorTarget = folder;
+  $("#folderColorName").textContent = folder.name;
+  renderPalette($("#folderColorPalette"), folder.color || "#536878", async (hex) => {
+    await updateFolderAppearance(folder, hex);
+    $("#folderColorDialog").close();
+  });
+  $("#folderColorDialog").showModal();
 }
 
 async function updateFolderAppearance(folder, color){
@@ -483,23 +593,18 @@ async function createFolderInline(name){
   const cleanName = String(name || "").trim();
   if(!cleanName) return;
 
-  const error = $("#folderInlineError");
+  const error = $("#folderCreateError");
   error.classList.add("hidden");
-  const parentValue = $("#inlineFolderParent").value;
-  const parentId = parentValue ? Number(parentValue) : null;
-  const color = $("#inlineFolderColor").value || "#4F6B8A";
-
   try {
     const f = await api("/api/folders", {
       method:"POST",
       body:JSON.stringify({
         name:cleanName,
-        parent_id:parentId,
-        color
+        parent_id:folderCreateParentId,
+        color:folderCreateColor
       })
     });
-    $("#inlineFolderName").value = "";
-    $("#inlineFolderForm").classList.add("hidden");
+    $("#folderCreateDialog").close();
     currentFolder = String(f.id);
     await loadFolders();
     await loadMeetings($("#search").value);
@@ -592,7 +697,7 @@ async function loadMeetings(q=""){
     btn.addEventListener("dragend", () => btn.classList.remove("dragging"));
     if(m.id===currentMeetingId) btn.classList.add("active");
     const badges=["ko",...(m.translations||[])].map(x=>`<span class="mini-lang">${x.toUpperCase()}</span>`).join("");
-    btn.innerHTML=`<strong>${escapeHtml(m.title)}</strong><span>${escapeHtml(fmtDate(m.recorded_at||m.created_at))}</span><small>${m.folder_name ? `<span class="folder-color-dot mini" style="background:${escapeHtml(m.folder_color||"#4F6B8A")}"></span>` + escapeHtml(m.folder_name) + " · " : ""}${m.author ? "작성자 " + escapeHtml(m.author) + " · " : ""}${escapeHtml(m.source||"")} ${badges}</small>`;
+    btn.innerHTML=`<strong>${escapeHtml(m.title)}</strong><span>${escapeHtml(fmtDate(m.recorded_at||m.created_at))}</span><small>${m.folder_name ? `<span class="folder-color-dot mini" style="background:${escapeHtml(m.folder_color||"#536878")}"></span>` + escapeHtml(m.folder_name) + " · " : ""}${m.author ? "작성자 " + escapeHtml(m.author) + " · " : ""}${escapeHtml(m.source||"")} ${badges}</small>`;
     btn.onclick=()=>openMeeting(m.id,"ko"); listEl.appendChild(btn);
   });
   emptyEl.classList.toggle("hidden", rows.length !== 0 || !!currentMeetingId);
@@ -608,7 +713,7 @@ async function openMeeting(id, lang="ko"){
 function renderMeeting(m){
   $("#title").textContent=m.title;
   $("#meta").innerHTML=[
-    m.folder_name ? `<span class="meta-folder"><span class="folder-color-dot" style="background:${escapeHtml(m.folder_color||"#4F6B8A")}"></span>${escapeHtml(m.folder_name)}</span>` : null,
+    m.folder_name ? `<span class="meta-folder"><span class="folder-color-dot" style="background:${escapeHtml(m.folder_color||"#536878")}"></span>${escapeHtml(m.folder_name)}</span>` : null,
     m.author ? `작성자: ${escapeHtml(m.author)}` : null,
     escapeHtml(fmtDate(m.recorded_at||m.created_at)),
     escapeHtml(m.source||"")
@@ -656,7 +761,7 @@ async function switchLanguage(lang){
 function setLanguageDisabled(disabled){ $$(".lang-btn").forEach(btn=>btn.disabled=disabled); }
 $$(".lang-btn").forEach(btn=>btn.addEventListener("click",()=>switchLanguage(btn.dataset.lang)));
 
-function openImport(){
+async function openImport(){
   $("#importForm").reset();
   $("#importStatus")?.classList.add("hidden");
   if($("#importStatus")) $("#importStatus").textContent = "";
@@ -666,9 +771,13 @@ function openImport(){
   }
   populateFolderSelects();
   $("#importAuthor").value = currentUser?.display_name || currentUser?.email || "";
-  const restored = restoreImportDraft();
-  if(!restored && currentFolder !== "all" && currentFolder !== "uncategorized"){
-    $("#importFolder").value = String(currentFolder);
+
+  const restoredLocal = restoreImportDraft();
+  if(!restoredLocal){
+    const restoredServer = await restoreServerDraft();
+    if(!restoredServer && currentFolder !== "all" && currentFolder !== "uncategorized"){
+      $("#importFolder").value = String(currentFolder);
+    }
   }
   importDialog.showModal();
 }
@@ -726,6 +835,7 @@ $("#importForm").addEventListener("submit",async(e)=>{
     }
 
     clearImportDraft();
+    await deleteServerDraft();
 
     if(status){
       status.textContent = `저장 확인 완료 · 회의 ID ${created.id}`;
@@ -771,13 +881,21 @@ $("#importForm").addEventListener("submit",async(e)=>{
 
 $("#editBtn").onclick=async()=>{
   if(!currentMeetingId) return; const m=await api(`/api/meetings/${currentMeetingId}?lang=ko`);
-  populateFolderSelects(); $("#editTitle").value=m.title||""; $("#editDate").value=toLocalInput(m.recorded_at); $("#editFolder").value=m.folder_id?String(m.folder_id):""; $("#editAuthor").value=m.author||""; $("#editSummary").value=m.summary||""; $("#editTranscript").value=m.transcript||""; editDialog.showModal();
+  populateFolderSelects(); $("#editTitle").value=m.title||""; $("#editDate").value=toLocalInput(m.recorded_at); $("#editFolder").value=m.folder_id?String(m.folder_id):""; $("#editAuthor").value=m.author||""; $("#editSummary").value=m.summary||""; $("#editTranscript").value=m.transcript||""; editDirty=false; $("#editAutoSaveStatus").textContent="20분마다 자동저장"; editDialog.showModal();
 };
 $("#closeEdit").onclick=()=>editDialog.close(); $("#cancelEdit").onclick=()=>editDialog.close();
+["#editTitle","#editDate","#editAuthor","#editFolder","#editSummary","#editTranscript"].forEach(sel => {
+  const el = $(sel);
+  if(el){
+    el.addEventListener("input", () => { editDirty = true; });
+    el.addEventListener("change", () => { editDirty = true; });
+  }
+});
+
 $("#editForm").addEventListener("submit",async(e)=>{
   e.preventDefault();
   const m=await api(`/api/meetings/${currentMeetingId}`,{method:"PUT",body:JSON.stringify({title:$("#editTitle").value.trim(),recorded_at:$("#editDate").value||null,summary:$("#editSummary").value.trim()||null,transcript:$("#editTranscript").value,participants:currentMeeting?.participants||null,folder_id:$("#editFolder").value?Number($("#editFolder").value):null,author:$("#editAuthor").value.trim()||null})});
-  editDialog.close(); await loadFolders(); await openMeeting(m.id,"ko");
+  editDirty=false; $("#editAutoSaveStatus").textContent=`저장 완료 · ${new Date().toLocaleTimeString()}`; editDialog.close(); await loadFolders(); await openMeeting(m.id,"ko");
 });
 
 $("#search").addEventListener("input",e=>{ clearTimeout(debounceTimer); debounceTimer=setTimeout(()=>loadMeetings(e.target.value),250); });
@@ -898,32 +1016,17 @@ $("#createUserForm").addEventListener("submit", async (e) => {
 
 
 
-$("#showFolderCreateBtn").onclick = () => {
-  if($("#inlineFolderForm").classList.contains("hidden")){
-    openFolderCreateForParent(null, "#4F6B8A");
-  } else {
-    $("#inlineFolderForm").classList.add("hidden");
-  }
-};
+$("#showFolderCreateBtn").onclick = () => openFolderCreateForParent(null);
 
-$("#cancelInlineFolder").onclick = () => {
-  $("#inlineFolderForm").classList.add("hidden");
-  $("#inlineFolderName").value = "";
-  $("#inlineFolderParent").value = "";
-  $("#inlineFolderColor").value = "#4F6B8A";
-  $("#folderInlineError").classList.add("hidden");
-};
+$("#closeFolderCreate").onclick = () => $("#folderCreateDialog").close();
+$("#cancelFolderCreate").onclick = () => $("#folderCreateDialog").close();
 
-$("#inlineFolderForm").addEventListener("submit", async (e) => {
+$("#folderCreateForm").addEventListener("submit", async (e) => {
   e.preventDefault();
-  await createFolderInline($("#inlineFolderName").value);
+  await createFolderInline($("#folderCreateName").value);
 });
 
-$("#inlineFolderName").addEventListener("keydown", (e) => {
-  if(e.key === "Escape"){
-    $("#cancelInlineFolder").click();
-  }
-});
+$("#closeFolderColor").onclick = () => $("#folderColorDialog").close();
 
 $("#quickFolderSelect").addEventListener("change", async (e) => {
   if(!currentMeetingId) return;
@@ -960,4 +1063,5 @@ $("#logoutBtn").onclick=async()=>{ await fetch(apiUrl("/api/auth/logout"),{metho
     banner.textContent = "회의록 목록 조회 실패: " + err.message;
     banner.classList.remove("hidden");
   }
+  setInterval(autoSaveTick, AUTO_SAVE_INTERVAL_MS);
 })();
