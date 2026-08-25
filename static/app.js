@@ -41,13 +41,38 @@ const shareDialog = $("#shareDialog");
 function loginUrl(){ return "/login.html?next=" + encodeURIComponent(location.pathname + location.search + location.hash); }
 
 async function api(path, options={}) {
-  const res = await fetch(apiUrl(path), {credentials:"include", headers:{"Content-Type":"application/json", ...(options.headers||{})}, ...options});
-  if (res.status === 401) { location.replace(loginUrl()); throw new Error("로그인이 필요합니다."); }
-  if (!res.ok) {
-    let msg = "요청에 실패했습니다.";
-    try { msg = (await res.json()).detail || msg; } catch {}
-    throw new Error(msg);
+  let res;
+  try {
+    res = await fetch(apiUrl(path), {
+      credentials:"include",
+      headers:{"Content-Type":"application/json", ...(options.headers||{})},
+      ...options
+    });
+  } catch(err) {
+    throw new Error(`서버 연결 실패 (${path}): ${err.message}`);
   }
+
+  if (res.status === 401) {
+    location.replace(loginUrl());
+    throw new Error("로그인이 필요합니다.");
+  }
+
+  if (!res.ok) {
+    let detail = "";
+    const contentType = res.headers.get("content-type") || "";
+    try {
+      if(contentType.includes("application/json")){
+        const body = await res.json();
+        detail = body.detail || JSON.stringify(body);
+      } else {
+        detail = (await res.text()).trim();
+      }
+    } catch {}
+
+    const shortDetail = detail ? detail.slice(0, 300) : "서버 응답 본문 없음";
+    throw new Error(`HTTP ${res.status} · ${path} · ${shortDetail}`);
+  }
+
   return res.json();
 }
 
@@ -590,7 +615,7 @@ $("#logoutBtn").onclick=async()=>{ await fetch(apiUrl("/api/auth/logout"),{metho
     await loadMeetings();
   } catch(err) {
     const banner = $("#appErrorBanner");
-    banner.textContent = "회의록 목록을 불러오지 못했습니다: " + err.message;
+    banner.textContent = "회의록 목록 조회 실패: " + err.message;
     banner.classList.remove("hidden");
   }
 })();

@@ -821,6 +821,24 @@ def admin_update_user(user_id: int, payload: AdminUserPatchIn, admin=Depends(req
     return result
 
 
+@app.get("/api/admin/diagnostics/db")
+def database_diagnostics(admin=Depends(require_admin)):
+    conn = db()
+    try:
+        meeting_count = conn.execute("SELECT COUNT(*) AS n FROM meetings").fetchone()["n"]
+        folder_count = conn.execute("SELECT COUNT(*) AS n FROM folders").fetchone()["n"]
+        user_count = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
+        return {
+            "ok": True,
+            "storage_backend": "postgresql" if USE_POSTGRES else "sqlite_ephemeral",
+            "meeting_count": meeting_count,
+            "folder_count": folder_count,
+            "user_count": user_count,
+        }
+    finally:
+        conn.close()
+
+
 @app.post("/api/plaud/webhook")
 def plaud_webhook(payload: MeetingIn, x_webhook_secret: Optional[str] = Header(default=None)):
     if WEBHOOK_SECRET != "change-me" and x_webhook_secret != WEBHOOK_SECRET:
@@ -951,10 +969,19 @@ def list_meetings(q: str = "", folder: str = "all", user=Depends(require_user)):
         clauses.append(
             """
             (
-                m.title LIKE ? OR m.transcript LIKE ? OR COALESCE(m.summary,'') LIKE ?
-                OR COALESCE(t.translated_title,'') LIKE ?
-                OR COALESCE(t.translated_transcript,'') LIKE ?
-                OR COALESCE(t.translated_summary,'') LIKE ?
+                m.title LIKE ?
+                OR m.transcript LIKE ?
+                OR COALESCE(m.summary, '') LIKE ?
+                OR EXISTS (
+                    SELECT 1
+                    FROM translations t
+                    WHERE t.meeting_id = m.id
+                      AND (
+                          COALESCE(t.translated_title, '') LIKE ?
+                          OR COALESCE(t.translated_transcript, '') LIKE ?
+                          OR COALESCE(t.translated_summary, '') LIKE ?
+                      )
+                )
             )
             """
         )
@@ -972,16 +999,27 @@ def list_meetings(q: str = "", folder: str = "all", user=Depends(require_user)):
         params.append(folder_id)
 
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+
     rows = conn.execute(
         f"""
-        SELECT DISTINCT
-            m.id, m.title, m.recorded_at, m.summary, m.participants, m.source,
-            m.created_at, m.folder_id, f.name AS folder_name
+        SELECT
+            m.id,
+            m.title,
+            m.recorded_at,
+            m.summary,
+            m.participants,
+            m.source,
+            m.created_at,
+            m.folder_id,
+            f.name AS folder_name
         FROM meetings m
-        LEFT JOIN translations t ON t.meeting_id = m.id
         LEFT JOIN folders f ON f.id = m.folder_id
         {where}
-        ORDER BY COALESCE(m.recorded_at, m.created_at) DESC
+        ORDER BY
+            CASE WHEN m.recorded_at IS NULL THEN 1 ELSE 0 END,
+            m.recorded_at DESC,
+            m.created_at DESC,
+            m.id DESC
         """,
         params,
     ).fetchall()
