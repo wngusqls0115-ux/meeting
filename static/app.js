@@ -276,6 +276,11 @@ function renderFolders(data){
       <span class="folder-color-dot" style="background:${escapeHtml(f.color || "#4F6B8A")}"></span>
       <span class="folder-label">${escapeHtml(f.name)}</span>
       <span class="folder-count">${Number(f.meeting_count || 0)}</span>`;
+    btn.ondblclick = async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await renameFolderInline(f);
+    };
     btn.onclick = async () => {
       currentFolder = String(f.id);
       currentMeetingId = null;
@@ -285,6 +290,18 @@ function renderFolders(data){
       await loadMeetings($("#search").value);
     };
     row.appendChild(btn);
+
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "folder-edit-btn";
+    edit.textContent = "✎";
+    edit.title = `"${f.name}" 폴더명 수정`;
+    edit.setAttribute("aria-label", `"${f.name}" 폴더명 수정`);
+    edit.onclick = async e => {
+      e.stopPropagation();
+      await renameFolderInline(f);
+    };
+    row.appendChild(edit);
 
     const color = document.createElement("input");
     color.type = "color";
@@ -381,6 +398,40 @@ function populateFolderParentSelect(){
     sel.appendChild(opt);
   });
   if([...sel.options].some(o => o.value === previous)) sel.value = previous;
+}
+
+async function renameFolderInline(folder){
+  const nextName = prompt("새 폴더명을 입력하세요.", folder.name);
+  if(nextName === null) return;
+
+  const cleanName = nextName.trim();
+  if(!cleanName){
+    showToast("폴더명은 비워둘 수 없습니다.", "error");
+    return;
+  }
+  if(cleanName === folder.name) return;
+
+  try {
+    await api(`/api/folders/${folder.id}`, {
+      method:"PATCH",
+      body:JSON.stringify({
+        name:cleanName,
+        parent_id:folder.parent_id,
+        color:folder.color || "#4F6B8A"
+      })
+    });
+
+    if(currentMeeting && Number(currentMeeting.folder_id) === Number(folder.id)){
+      currentMeeting.folder_name = cleanName;
+      renderMeeting(currentMeeting);
+    }
+
+    await loadFolders();
+    await loadMeetings($("#search").value);
+    showToast(`폴더명을 "${cleanName}"으로 변경했습니다.`, "success");
+  } catch(err) {
+    showToast("폴더명 변경 실패: " + err.message, "error");
+  }
 }
 
 async function updateFolderAppearance(folder, color){
@@ -630,7 +681,6 @@ $("#newBtn").onclick=openImport; $("#emptyNewBtn").onclick=openImport; $("#close
   }
 });
 
-$("#fileInput").addEventListener("change",async(e)=>{ const f=e.target.files?.[0]; if(!f) return; $("#importTranscript").value=await f.text(); if(!$("#importTitle").value) $("#importTitle").value=f.name.replace(/\.(txt|srt|md)$/i,""); scheduleImportDraft(); });
 $("#importForm").addEventListener("submit",async(e)=>{
   e.preventDefault();
   const transcript = $("#importTranscript").value.trim();

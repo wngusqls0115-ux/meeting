@@ -4,7 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>회의록</title>
-  <link rel="stylesheet" href="/styles.css?v=20260825-nested-color-author-v1"/>
+  <link rel="stylesheet" href="/styles.css?v=20260825-paste-only-rename-v1"/>
 </head>
 <body>
   <div id="appErrorBanner" class="app-error-banner hidden"></div>
@@ -20,7 +20,7 @@
         </div>
       </div>
       <div id="storageStatus" class="storage-status">저장소 확인 중...</div>
-      <button id="newBtn" class="primary">+ 회의 가져오기</button>
+      <button id="newBtn" class="primary">+ 회의 내용 붙여넣기</button>
 
       <section class="folder-section">
         <div class="folder-head">
@@ -77,14 +77,14 @@
 
   <dialog id="importDialog"><form id="importForm" method="dialog">
     <div class="dialog-head"><h2>회의 가져오기</h2><button type="button" class="icon" id="closeImport">×</button></div>
+    <p class="dialog-note">PLAUD 파일 업로드는 사용하지 않습니다. PLAUD에서 생성한 회의 내용을 복사한 뒤 아래 입력창에 붙여넣어 저장합니다.</p>
     <div id="draftStatus" class="draft-status hidden"></div>
     <label>회의 제목<input id="importTitle" required placeholder="예: 주간 생산기술 회의"/></label>
     <label>회의 일시<input id="importDate" type="datetime-local"/></label>
     <label>작성자<input id="importAuthor" placeholder="작성자 이름"/></label>
     <label>폴더<select id="importFolder"><option value="">미분류</option></select></label>
-    <label>PLAUD 전사 파일<input id="fileInput" type="file" accept=".txt,.srt,.md"/></label>
-    <label>또는 전사 내용 붙여넣기<textarea id="importTranscript" rows="10" placeholder="전사 내용을 붙여넣으세요."></textarea></label>
-    <label>PLAUD AI 요약 (선택)<textarea id="importSummary" rows="5" placeholder="PLAUD에서 생성한 요약을 붙여넣으세요."></textarea></label>
+<label>회의 내용 붙여넣기<textarea id="importTranscript" rows="14" placeholder="PLAUD에서 정리된 회의 내용을 복사하여 여기에 붙여넣으세요."></textarea></label>
+    <label>회의 요약 (선택)<textarea id="importSummary" rows="5" placeholder="PLAUD 요약이 있다면 복사하여 붙여넣으세요."></textarea></label>
     <div id="importStatus" class="save-status hidden"></div>
     <div class="dialog-actions"><button type="button" class="secondary" id="cancelImport">취소</button><button id="importSaveBtn" class="primary" type="submit">저장</button></div>
   </form></dialog>
@@ -133,8 +133,8 @@
   </div></dialog>
 
 
-  <script src="/config.js?v=20260825-nested-color-author-v1"></script>
-  <script src="/app.js?v=20260825-nested-color-author-v1"></script>
+  <script src="/config.js?v=20260825-paste-only-rename-v1"></script>
+  <script src="/app.js?v=20260825-paste-only-rename-v1"></script>
   <script>
     setTimeout(() => {
       if (!window.MEETING_APP_LOADED) {

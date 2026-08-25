@@ -301,3 +301,23 @@ label input,label textarea,label select{margin-top:7px;font-weight:400}
     grid-column:auto!important;
   }
 }
+
+.folder-edit-btn{
+  flex:0 0 auto;
+  width:25px;
+  height:25px;
+  border:0;
+  border-radius:7px;
+  background:transparent;
+  color:#7a8798;
+  font-size:14px;
+  line-height:1;
+  cursor:pointer;
+}
+.folder-edit-btn:hover{
+  background:#eef4fb;
+  color:#123f72;
+}
+.folder-row-color{
+  flex:0 0 auto;
+}
