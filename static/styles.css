@@ -388,3 +388,17 @@ label input,label textarea,label select{margin-top:7px;font-weight:400}
 .color-choice-code{font-size:10px;color:#8a95a4;font-family:Consolas,monospace}
 .selected-color-text{margin:5px 0 8px;font-size:12px;font-weight:700;color:#4a596d}
 @media(max-width:680px){.color-palette{grid-template-columns:1fr}}
+
+.folder-root-drop-zone{display:none;margin:6px 0 8px;padding:9px 10px;border:1px dashed #aebac8;border-radius:9px;background:#f8fafc;color:#68778a;font-size:11px;text-align:center}
+.folder-section:has(.folder-dragging) .folder-root-drop-zone,.folder-root-drop-zone.drag-over{display:block}
+.folder-root-drop-zone.drag-over{border-color:#4b759e;background:#eaf3fb;color:#244d75}
+.folder-indent{flex:0 0 auto;height:1px}
+.folder-drag-handle{flex:0 0 auto;width:20px;cursor:grab;color:#a2acb8;font-size:12px;letter-spacing:-3px;user-select:none}
+.folder-drag-handle:active{cursor:grabbing}
+.folder-row.folder-dragging{opacity:.45}
+.folder-toggle-btn{flex:0 0 auto;width:22px;height:24px;border:0;border-radius:6px;background:transparent;color:#657488;padding:0;font-size:13px}
+.folder-toggle-btn:hover:not(:disabled){background:#edf3f8;color:#244d75}
+.folder-toggle-btn.empty{color:#c3cad3}
+.folder-move-btn{flex:0 0 auto;width:26px;height:25px;border:0;border-radius:7px;background:transparent;color:#758398;font-size:14px}
+.folder-move-btn:hover{background:#eef4fb;color:#123f72}
+.tree-folder-btn{padding-left:4px!important}

@@ -4,7 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>회의록</title>
-  <link rel="stylesheet" href="/styles.css?v=20260825-rename-palette-fix-v1"/>
+  <link rel="stylesheet" href="/styles.css?v=20260825-folder-tree-move-v2"/>
 </head>
 <body>
   <div id="appErrorBanner" class="app-error-banner hidden"></div>
@@ -29,7 +29,8 @@
         </div>
 
         <div id="folderInlineError" class="folder-inline-error hidden"></div>
-        <div class="folder-help">폴더의 + 버튼으로 하위 폴더를 추가하고, ✎ 버튼으로 이름을 수정합니다. 색상 버튼을 누르면 10개 기본색 중에서 선택합니다.</div>
+        <div id="folderRootDropZone" class="folder-root-drop-zone">여기로 폴더를 끌면 최상위로 이동</div>
+        <div class="folder-help">▸/▾로 하위 폴더를 접고 펼칩니다. +는 하위 폴더, ✎는 이름 변경, ⇄는 이동입니다. 폴더를 다른 폴더 위로 끌어 이동할 수도 있습니다.</div>
         <div id="folderList" class="folder-list"></div>
       </section>
 
@@ -102,6 +103,23 @@
     <div class="dialog-actions"><button type="button" class="secondary" id="cancelFolderCreate">취소</button><button type="submit" class="primary">생성</button></div>
   </form></dialog>
 
+  <dialog id="folderRenameDialog"><form id="folderRenameForm" method="dialog">
+    <div class="dialog-head"><h2>폴더 이름 변경</h2><button type="button" class="icon" id="closeFolderRename">×</button></div>
+    <input id="folderRenameId" type="hidden"/>
+    <label>폴더명<input id="folderRenameName" maxlength="80" required/></label>
+    <div id="folderRenameError" class="form-error hidden"></div>
+    <div class="dialog-actions"><button type="button" class="secondary" id="cancelFolderRename">취소</button><button type="submit" class="primary">변경</button></div>
+  </form></dialog>
+
+  <dialog id="folderMoveDialog"><form id="folderMoveForm" method="dialog">
+    <div class="dialog-head"><h2>폴더 이동</h2><button type="button" class="icon" id="closeFolderMove">×</button></div>
+    <input id="folderMoveId" type="hidden"/>
+    <div id="folderMoveName" class="dialog-note"></div>
+    <label>새 상위 폴더<select id="folderMoveParent"><option value="">최상위 폴더</option></select></label>
+    <div id="folderMoveError" class="form-error hidden"></div>
+    <div class="dialog-actions"><button type="button" class="secondary" id="cancelFolderMove">취소</button><button type="submit" class="primary">이동</button></div>
+  </form></dialog>
+
   <dialog id="folderColorDialog"><div class="folder-color-dialog">
     <div class="dialog-head"><h2>폴더 색상</h2><button type="button" class="icon" id="closeFolderColor">×</button></div>
     <div id="folderColorName" class="dialog-note"></div>
@@ -141,8 +159,8 @@
   </div></dialog>
 
 
-  <script src="/config.js?v=20260825-rename-palette-fix-v1"></script>
-  <script src="/app.js?v=20260825-rename-palette-fix-v1"></script>
+  <script src="/config.js?v=20260825-folder-tree-move-v2"></script>
+  <script src="/app.js?v=20260825-folder-tree-move-v2"></script>
   <script>
     setTimeout(() => {
       if (!window.MEETING_APP_LOADED) {

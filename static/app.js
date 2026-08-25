@@ -28,6 +28,19 @@ let foldersCache = [];
 let folderCreateParentId = null;
 let folderCreateColor = "#536878";
 let folderColorTarget = null;
+let folderRenameTarget = null;
+let folderMoveTarget = null;
+
+const COLLAPSED_FOLDERS_KEY = "meeting_collapsed_folders_v1";
+let collapsedFolderIds = new Set();
+try {
+  collapsedFolderIds = new Set(JSON.parse(localStorage.getItem(COLLAPSED_FOLDERS_KEY) || "[]").map(String));
+} catch {
+  collapsedFolderIds = new Set();
+}
+function persistCollapsedFolders(){
+  try { localStorage.setItem(COLLAPSED_FOLDERS_KEY, JSON.stringify([...collapsedFolderIds])); } catch {}
+}
 let editDirty = false;
 let autoSaveBusy = false;
 
@@ -358,8 +371,12 @@ function renderFolders(data){
     row.appendChild(btn);
 
     if(value === "uncategorized"){
-      row.classList.add("folder-drop-target");
-      row.addEventListener("dragover", e => { e.preventDefault(); row.classList.add("drag-over"); });
+      row.addEventListener("dragover", e => {
+        if(e.dataTransfer.types.includes("text/meeting-id")){
+          e.preventDefault();
+          row.classList.add("drag-over");
+        }
+      });
       row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
       row.addEventListener("drop", async e => {
         e.preventDefault();
@@ -373,31 +390,82 @@ function renderFolders(data){
 
   function addFolderRow(f, depth){
     const row = document.createElement("div");
-    row.className = "folder-row folder-drop-target" + (String(currentFolder) === String(f.id) ? " active" : "");
-    row.style.setProperty("--folder-depth", depth);
+    row.className = "folder-row" + (String(currentFolder) === String(f.id) ? " active" : "");
     row.dataset.folderValue = String(f.id);
 
-    row.addEventListener("dragover", e => { e.preventDefault(); row.classList.add("drag-over"); });
+    row.addEventListener("dragover", e => {
+      if(e.dataTransfer.types.includes("application/x-folder-id") || e.dataTransfer.types.includes("text/meeting-id")){
+        e.preventDefault();
+        row.classList.add("drag-over");
+      }
+    });
     row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
     row.addEventListener("drop", async e => {
       e.preventDefault();
+      e.stopPropagation();
       row.classList.remove("drag-over");
+
+      const draggedFolderId = Number(e.dataTransfer.getData("application/x-folder-id"));
+      if(draggedFolderId){
+        if(draggedFolderId !== Number(f.id)) await moveFolderToParent(draggedFolderId, Number(f.id));
+        return;
+      }
+
       const meetingId = Number(e.dataTransfer.getData("text/meeting-id"));
       if(meetingId) await moveMeetingToFolder(meetingId, Number(f.id), f.name);
     });
 
+    const indent = document.createElement("span");
+    indent.className = "folder-indent";
+    indent.style.width = `${depth * 16}px`;
+    row.appendChild(indent);
+
+    const dragHandle = document.createElement("span");
+    dragHandle.className = "folder-drag-handle";
+    dragHandle.textContent = "⋮⋮";
+    dragHandle.title = "드래그하여 폴더 이동";
+    dragHandle.draggable = true;
+    dragHandle.addEventListener("dragstart", e => {
+      e.stopPropagation();
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("application/x-folder-id", String(f.id));
+      e.dataTransfer.setData("text/plain", `folder:${f.id}`);
+      row.classList.add("folder-dragging");
+    });
+    dragHandle.addEventListener("dragend", () => row.classList.remove("folder-dragging"));
+    row.appendChild(dragHandle);
+
+    const childRows = children.get(String(f.id)) || [];
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "folder-toggle-btn";
+    if(childRows.length){
+      const collapsed = collapsedFolderIds.has(String(f.id));
+      toggle.textContent = collapsed ? "▸" : "▾";
+      toggle.title = collapsed ? "하위 폴더 펼치기" : "하위 폴더 접기";
+      toggle.onclick = e => {
+        e.stopPropagation();
+        const key = String(f.id);
+        if(collapsedFolderIds.has(key)) collapsedFolderIds.delete(key);
+        else collapsedFolderIds.add(key);
+        persistCollapsedFolders();
+        renderFolders(data);
+      };
+    } else {
+      toggle.textContent = "·";
+      toggle.disabled = true;
+      toggle.classList.add("empty");
+    }
+    row.appendChild(toggle);
+
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "folder-filter-btn tree-folder-btn";
-    btn.style.paddingLeft = `${8 + depth * 16}px`;
-    btn.innerHTML = `
-      <span class="folder-color-dot" style="background:${escapeHtml(f.color || "#536878")}"></span>
-      <span class="folder-label">${escapeHtml(f.name)}</span>
-      <span class="folder-count">${Number(f.meeting_count || 0)}</span>`;
-    btn.ondblclick = async (e) => {
+    btn.innerHTML = `<span class="folder-color-dot" style="background:${escapeHtml(f.color || "#536878")}"></span><span class="folder-label">${escapeHtml(f.name)}</span><span class="folder-count">${Number(f.meeting_count || 0)}</span>`;
+    btn.ondblclick = e => {
       e.preventDefault();
       e.stopPropagation();
-      await renameFolderInline(f);
+      openFolderRenameDialog(f);
     };
     btn.onclick = async () => {
       currentFolder = String(f.id);
@@ -414,23 +482,23 @@ function renderFolders(data){
     edit.className = "folder-edit-btn";
     edit.textContent = "✎";
     edit.title = `"${f.name}" 폴더명 수정`;
-    edit.setAttribute("aria-label", `"${f.name}" 폴더명 수정`);
-    edit.onclick = async e => {
-      e.stopPropagation();
-      await renameFolderInline(f);
-    };
+    edit.onclick = e => { e.stopPropagation(); openFolderRenameDialog(f); };
     row.appendChild(edit);
+
+    const move = document.createElement("button");
+    move.type = "button";
+    move.className = "folder-move-btn";
+    move.textContent = "⇄";
+    move.title = `"${f.name}" 폴더 이동`;
+    move.onclick = e => { e.stopPropagation(); openFolderMoveDialog(f); };
+    row.appendChild(move);
 
     const color = document.createElement("button");
     color.type = "button";
     color.className = "folder-color-btn";
     color.style.background = f.color || "#536878";
     color.title = `"${f.name}" 색상 변경`;
-    color.setAttribute("aria-label", `"${f.name}" 색상 변경`);
-    color.onclick = e => {
-      e.stopPropagation();
-      openFolderColorDialog(f);
-    };
+    color.onclick = e => { e.stopPropagation(); openFolderColorDialog(f); };
     row.appendChild(color);
 
     const child = document.createElement("button");
@@ -438,10 +506,7 @@ function renderFolders(data){
     child.className = "folder-child-btn";
     child.textContent = "+";
     child.title = `"${f.name}" 아래 하위 폴더 추가`;
-    child.onclick = e => {
-      e.stopPropagation();
-      openFolderCreateForParent(f.id);
-    };
+    child.onclick = e => { e.stopPropagation(); openFolderCreateForParent(f.id); };
     row.appendChild(child);
 
     const del = document.createElement("button");
@@ -457,7 +522,9 @@ function renderFolders(data){
 
     folderListEl.appendChild(row);
 
-    (children.get(String(f.id)) || []).forEach(c => addFolderRow(c, depth + 1));
+    if(!collapsedFolderIds.has(String(f.id))){
+      childRows.forEach(c => addFolderRow(c, depth + 1));
+    }
   }
 
   addSystemRow("전체 회의", "all", data.total_count, "▦");
@@ -556,49 +623,91 @@ function openFolderColorDialog(folder){
 }
 
 
-async function renameFolderInline(folder){
-  const nextName = prompt("새 폴더명을 입력하세요.", folder.name);
-  if(nextName === null) return;
+function openFolderRenameDialog(folder){
+  folderRenameTarget = folder;
+  $("#folderRenameId").value = String(folder.id);
+  $("#folderRenameName").value = folder.name;
+  $("#folderRenameError").classList.add("hidden");
+  $("#folderRenameDialog").showModal();
+  setTimeout(() => { $("#folderRenameName").focus(); $("#folderRenameName").select(); }, 0);
+}
 
-  const cleanName = String(nextName || "").trim();
-  if(!cleanName){
-    showToast("폴더명은 비워둘 수 없습니다.", "error");
-    return;
+async function renameFolderInline(folder, newName){
+  const cleanName = String(newName || "").trim();
+  if(!cleanName) throw new Error("폴더명은 비워둘 수 없습니다.");
+
+  const updated = await api(`/api/folders/${folder.id}/rename`, {
+    method:"PATCH",
+    body:JSON.stringify({name:cleanName})
+  });
+
+  if(currentMeeting && Number(currentMeeting.folder_id) === Number(folder.id)){
+    currentMeeting.folder_name = updated.name;
+    renderMeeting(currentMeeting);
   }
-  if(cleanName === folder.name) return;
 
-  try {
-    const updated = await api(`/api/folders/${folder.id}`, {
-      method:"PATCH",
-      body:JSON.stringify({
-        name:cleanName,
-        parent_id:folder.parent_id ?? null,
-        color:folder.color || "#536878"
-      })
-    });
+  await loadFolders();
+  await loadMeetings($("#search").value);
+  return updated;
+}
 
-    if(currentMeeting && Number(currentMeeting.folder_id) === Number(folder.id)){
-      currentMeeting.folder_name = updated.name;
-      renderMeeting(currentMeeting);
-    }
-
-    await loadFolders();
-    await loadMeetings($("#search").value);
-    showToast(`폴더명을 "${cleanName}"으로 변경했습니다.`, "success");
-  } catch(err) {
-    showToast("폴더명 변경 실패: " + err.message, "error");
+function folderIsDescendant(candidateId, ancestorId){
+  let current = foldersCache.find(f => Number(f.id) === Number(candidateId));
+  const seen = new Set();
+  while(current && current.parent_id != null){
+    if(seen.has(String(current.id))) break;
+    seen.add(String(current.id));
+    if(Number(current.parent_id) === Number(ancestorId)) return true;
+    current = foldersCache.find(f => Number(f.id) === Number(current.parent_id));
   }
+  return false;
+}
+
+function populateFolderMoveParentSelect(folder){
+  const sel = $("#folderMoveParent");
+  sel.innerHTML = `<option value="">최상위 폴더</option>`;
+  sortedFolderTree().forEach(({folder:candidate, depth}) => {
+    if(Number(candidate.id) === Number(folder.id)) return;
+    if(folderIsDescendant(candidate.id, folder.id)) return;
+    const opt = document.createElement("option");
+    opt.value = String(candidate.id);
+    opt.textContent = `${"— ".repeat(depth)}${candidate.name}`;
+    sel.appendChild(opt);
+  });
+  sel.value = folder.parent_id == null ? "" : String(folder.parent_id);
+}
+
+function openFolderMoveDialog(folder){
+  folderMoveTarget = folder;
+  $("#folderMoveId").value = String(folder.id);
+  $("#folderMoveName").textContent = `이동할 폴더: ${folder.name}`;
+  $("#folderMoveError").classList.add("hidden");
+  populateFolderMoveParentSelect(folder);
+  $("#folderMoveDialog").showModal();
+}
+
+async function moveFolderToParent(folderId, parentId){
+  const updated = await api(`/api/folders/${folderId}/move`, {
+    method:"PATCH",
+    body:JSON.stringify({parent_id:parentId})
+  });
+
+  if(parentId != null){
+    collapsedFolderIds.delete(String(parentId));
+    persistCollapsedFolders();
+  }
+  await loadFolders();
+  await loadMeetings($("#search").value);
+  const parent = parentId == null ? null : foldersCache.find(f => Number(f.id) === Number(parentId));
+  showToast(`폴더를 ${parent ? `"${parent.name}" 아래` : "최상위"}로 이동했습니다.`, "success");
+  return updated;
 }
 
 async function updateFolderAppearance(folder, color){
   try {
-    await api(`/api/folders/${folder.id}`, {
+    await api(`/api/folders/${folder.id}/color`, {
       method:"PATCH",
-      body:JSON.stringify({
-        name:folder.name,
-        parent_id:folder.parent_id,
-        color
-      })
+      body:JSON.stringify({color})
     });
     await loadFolders();
     if(currentMeeting && Number(currentMeeting.folder_id) === Number(folder.id)){
@@ -628,7 +737,6 @@ function populateFolderSelects(){
       sel.value = previous;
     }
   });
-  populateFolderParentSelect();
 
   if(currentMeeting && $("#quickFolderSelect")){
     $("#quickFolderSelect").value = currentMeeting.folder_id ? String(currentMeeting.folder_id) : "";
@@ -1061,6 +1169,59 @@ $("#createUserForm").addEventListener("submit", async (e) => {
 });
 
 
+
+const folderRootDropZone = $("#folderRootDropZone");
+folderRootDropZone.addEventListener("dragover", e => {
+  if(e.dataTransfer.types.includes("application/x-folder-id")){
+    e.preventDefault();
+    folderRootDropZone.classList.add("drag-over");
+  }
+});
+folderRootDropZone.addEventListener("dragleave", () => folderRootDropZone.classList.remove("drag-over"));
+folderRootDropZone.addEventListener("drop", async e => {
+  e.preventDefault();
+  folderRootDropZone.classList.remove("drag-over");
+  const folderId = Number(e.dataTransfer.getData("application/x-folder-id"));
+  if(folderId){
+    try { await moveFolderToParent(folderId, null); }
+    catch(err){ showToast("폴더 이동 실패: " + err.message, "error"); }
+  }
+});
+
+$("#closeFolderRename").onclick = () => $("#folderRenameDialog").close();
+$("#cancelFolderRename").onclick = () => $("#folderRenameDialog").close();
+$("#folderRenameForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const error = $("#folderRenameError");
+  error.classList.add("hidden");
+  try {
+    if(!folderRenameTarget) throw new Error("수정할 폴더를 찾을 수 없습니다.");
+    const updated = await renameFolderInline(folderRenameTarget, $("#folderRenameName").value);
+    folderRenameTarget = updated;
+    $("#folderRenameDialog").close();
+    showToast(`폴더명을 "${updated.name}"으로 변경했습니다.`, "success");
+  } catch(err) {
+    error.textContent = err.message;
+    error.classList.remove("hidden");
+  }
+});
+
+$("#closeFolderMove").onclick = () => $("#folderMoveDialog").close();
+$("#cancelFolderMove").onclick = () => $("#folderMoveDialog").close();
+$("#folderMoveForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const error = $("#folderMoveError");
+  error.classList.add("hidden");
+  try {
+    if(!folderMoveTarget) throw new Error("이동할 폴더를 찾을 수 없습니다.");
+    const value = $("#folderMoveParent").value;
+    await moveFolderToParent(folderMoveTarget.id, value ? Number(value) : null);
+    $("#folderMoveDialog").close();
+  } catch(err) {
+    error.textContent = err.message;
+    error.classList.remove("hidden");
+  }
+});
 
 $("#showFolderCreateBtn").onclick = () => openFolderCreateForParent(null);
 

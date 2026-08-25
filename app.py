@@ -421,7 +421,20 @@ class AdminUserPatchIn(BaseModel):
 class FolderIn(BaseModel):
     name: str
     parent_id: Optional[int] = None
-    color: str = "#4F6B8A"
+    color: str = "#536878"
+
+
+class FolderRenameIn(BaseModel):
+    name: str
+
+
+class FolderMoveIn(BaseModel):
+    parent_id: Optional[int] = None
+
+
+class FolderColorIn(BaseModel):
+    color: str
+
 
 
 class MeetingFolderMoveIn(BaseModel):
@@ -1123,6 +1136,67 @@ def create_folder(payload: FolderIn, user=Depends(require_user)):
         raise HTTPException(status_code=409, detail="같은 이름의 폴더가 이미 있습니다.")
 
     row = conn.execute("SELECT * FROM folders WHERE id=?", (cur.lastrowid,)).fetchone()
+    result = dict(row)
+    conn.close()
+    return result
+
+
+@app.patch("/api/folders/{folder_id}/rename")
+def rename_folder(folder_id: int, payload: FolderRenameIn, user=Depends(require_user)):
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="폴더 이름을 입력해 주세요.")
+    if len(name) > 80:
+        raise HTTPException(status_code=400, detail="폴더 이름은 80자 이하로 입력해 주세요.")
+
+    conn = db()
+    existing = conn.execute("SELECT id FROM folders WHERE id=?", (folder_id,)).fetchone()
+    if not existing:
+        conn.close()
+        raise HTTPException(status_code=404, detail="폴더를 찾을 수 없습니다.")
+    try:
+        conn.execute("UPDATE folders SET name=? WHERE id=?", (name, folder_id))
+        conn.commit()
+    except DB_INTEGRITY_ERRORS:
+        conn.rollback()
+        conn.close()
+        raise HTTPException(status_code=409, detail="같은 이름의 폴더가 이미 있습니다.")
+
+    row = conn.execute("SELECT * FROM folders WHERE id=?", (folder_id,)).fetchone()
+    result = dict(row)
+    conn.close()
+    return result
+
+
+@app.patch("/api/folders/{folder_id}/move")
+def move_folder(folder_id: int, payload: FolderMoveIn, user=Depends(require_user)):
+    conn = db()
+    existing = conn.execute("SELECT id, parent_id FROM folders WHERE id=?", (folder_id,)).fetchone()
+    if not existing:
+        conn.close()
+        raise HTTPException(status_code=404, detail="폴더를 찾을 수 없습니다.")
+
+    validate_folder_parent(conn, folder_id, payload.parent_id)
+    conn.execute("UPDATE folders SET parent_id=? WHERE id=?", (payload.parent_id, folder_id))
+    conn.commit()
+    row = conn.execute("SELECT * FROM folders WHERE id=?", (folder_id,)).fetchone()
+    result = dict(row)
+    conn.close()
+    return result
+
+
+@app.patch("/api/folders/{folder_id}/color")
+def change_folder_color(folder_id: int, payload: FolderColorIn, user=Depends(require_user)):
+    color = normalize_folder_color(payload.color)
+    conn = db()
+    existing = conn.execute("SELECT id FROM folders WHERE id=?", (folder_id,)).fetchone()
+    if not existing:
+        conn.close()
+        raise HTTPException(status_code=404, detail="폴더를 찾을 수 없습니다.")
+
+    conn.execute("UPDATE folders SET color=? WHERE id=?", (color, folder_id))
+    conn.commit()
+    row = conn.execute("SELECT * FROM folders WHERE id=?", (folder_id,)).fetchone()
     result = dict(row)
     conn.close()
     return result
