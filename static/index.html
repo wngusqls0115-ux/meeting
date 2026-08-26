@@ -4,7 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>회의록</title>
-  <link rel="stylesheet" href="/styles.css?v=20260825-folder-tree-move-v2"/>
+  <link rel="stylesheet" href="/styles.css?v=20260826-fu-calendar-v5"/>
 </head>
 <body>
   <div id="appErrorBanner" class="app-error-banner hidden"></div>
@@ -30,8 +30,29 @@
 
         <div id="folderInlineError" class="folder-inline-error hidden"></div>
         <div id="folderRootDropZone" class="folder-root-drop-zone">여기로 폴더를 끌면 최상위로 이동</div>
-        <div class="folder-help">▸/▾로 하위 폴더를 접고 펼칩니다. +는 하위 폴더, ✎는 이름 변경, ⇄는 이동입니다. 폴더를 다른 폴더 위로 끌어 이동할 수도 있습니다.</div>
+        <div class="folder-help">폴더 행을 마우스로 끌어 다른 폴더 아래로 이동합니다. ▸/▾는 접기·펼치기, +는 하위 폴더 추가입니다. 이름·색상 변경은 폴더를 오른쪽 클릭하세요.</div>
         <div id="folderList" class="folder-list"></div>
+      </section>
+
+      <section class="calendar-section">
+        <div class="calendar-head">
+          <strong>F/U 캘린더</strong>
+          <div class="calendar-nav">
+            <button id="calendarPrev" type="button" aria-label="이전 달">‹</button>
+            <button id="calendarToday" type="button">오늘</button>
+            <button id="calendarNext" type="button" aria-label="다음 달">›</button>
+          </div>
+        </div>
+        <div id="calendarMonthLabel" class="calendar-month-label"></div>
+        <div class="calendar-weekdays">
+          <span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span>
+        </div>
+        <div id="calendarGrid" class="calendar-grid"></div>
+        <div class="calendar-followup-head">
+          <strong>이번 달 F/U</strong>
+          <span id="calendarFollowUpCount">0</span>
+        </div>
+        <div id="calendarFollowUpList" class="calendar-followup-list"></div>
       </section>
 
       <input id="search" class="search" placeholder="선택한 폴더에서 검색"/>
@@ -58,22 +79,71 @@
           </div>
         </header>
         <div id="translationNotice" class="translation-notice hidden"></div>
-        <section><h2>AI 요약</h2><div id="summary" class="paper muted"></div></section>
-        <section><h2>전체 전사</h2><pre id="transcript" class="paper transcript"></pre></section>
+
+        <section class="minutes-section">
+          <h2>1. 회의개요</h2>
+          <div class="meeting-overview-card">
+            <div class="overview-item overview-wide"><span>회의명</span><strong id="overviewTitle">-</strong></div>
+            <div class="overview-item"><span>일시</span><strong id="overviewDate">-</strong></div>
+            <div class="overview-item"><span>회의장소</span><strong id="overviewLocation">-</strong></div>
+            <div class="overview-item"><span>회의방식</span><strong id="overviewMethod">-</strong></div>
+            <div class="overview-item"><span>참석자</span><strong id="overviewParticipants">-</strong></div>
+            <div class="overview-item"><span>작성자</span><strong id="overviewAuthor">-</strong></div>
+            <div class="overview-item overview-wide overview-purpose"><span>회의목적</span><div id="overviewPurpose">-</div></div>
+          </div>
+        </section>
+
+        <section class="minutes-section"><h2>2. 요약</h2><div id="summary" class="paper minutes-text muted"></div></section>
+        <section class="minutes-section"><h2>3. 회의 세부사항</h2><pre id="transcript" class="paper transcript minutes-text"></pre></section>
+        <section class="minutes-section">
+          <h2>4. F/U 사항</h2>
+          <div id="followUp" class="follow-up-display"></div>
+          <div id="legacyFollowUp" class="paper minutes-text hidden"></div>
+        </section>
       </article>
     </main>
+  </div>
+
+  <div id="folderContextMenu" class="folder-context-menu hidden" role="menu">
+    <div id="folderContextTitle" class="folder-context-title"></div>
+    <button id="contextRenameFolder" class="folder-context-action" type="button">이름 변경</button>
+    <button id="contextAddChild" class="folder-context-action" type="button">하위 폴더 추가</button>
+    <div class="folder-context-divider"></div>
+    <div class="folder-context-label">폴더 색상</div>
+    <div id="folderContextPalette" class="folder-context-palette"></div>
+    <div class="folder-context-divider"></div>
+    <button id="contextMoveRoot" class="folder-context-action" type="button">최상위로 이동</button>
+    <button id="contextDeleteFolder" class="folder-context-action danger" type="button">폴더 삭제</button>
   </div>
 
   <dialog id="importDialog"><form id="importForm" method="dialog">
     <div class="dialog-head"><h2>회의 가져오기</h2><button type="button" class="icon" id="closeImport">×</button></div>
     <p class="dialog-note">PLAUD에서 생성한 회의 내용을 복사해 붙여넣습니다. 미저장 내용은 브라우저에 수시 임시저장되고, 창을 열어둔 경우 20분마다 PostgreSQL 초안으로 자동 저장됩니다.</p>
     <div id="draftStatus" class="draft-status hidden"></div>
-    <label>회의 제목<input id="importTitle" required placeholder="예: 주간 생산기술 회의"/></label>
-    <label>회의 일시<input id="importDate" type="datetime-local"/></label>
-    <label>작성자<input id="importAuthor" placeholder="작성자 이름"/></label>
-    <label>폴더<select id="importFolder"><option value="">미분류</option></select></label>
-<label>회의 내용 붙여넣기<textarea id="importTranscript" rows="14" placeholder="PLAUD에서 정리된 회의 내용을 복사하여 여기에 붙여넣으세요."></textarea></label>
-    <label>회의 요약 (선택)<textarea id="importSummary" rows="5" placeholder="PLAUD 요약이 있다면 복사하여 붙여넣으세요."></textarea></label>
+    <div class="form-section-title">회의개요</div>
+    <label>회의명<input id="importTitle" required placeholder="예: Nd 연구자석 제조 회의"/></label>
+    <div class="form-grid-2">
+      <label>회의 일시<input id="importDate" type="datetime-local"/></label>
+      <label>회의장소<input id="importLocation" placeholder="예: 구미 연구소 3층 회의실"/></label>
+      <label>회의방식<input id="importMethod" placeholder="예: 대면 / Teams / Webex"/></label>
+      <label>참석자<input id="importParticipants" placeholder="예: 홍길동, 김영희, 이철수"/></label>
+      <label>작성자<input id="importAuthor" placeholder="작성자 이름"/></label>
+      <label>폴더<select id="importFolder"><option value="">미분류</option></select></label>
+    </div>
+    <label>회의목적<textarea id="importPurpose" rows="3" placeholder="이번 회의의 목적을 입력하세요."></textarea></label>
+
+    <div class="form-section-title">요약</div>
+    <label>회의 요약<textarea id="importSummary" rows="5" placeholder="PLAUD 요약이 있다면 복사하여 붙여넣으세요."></textarea></label>
+
+    <div class="form-section-title">회의 세부사항</div>
+    <label>회의 내용 붙여넣기<textarea id="importTranscript" rows="14" placeholder="PLAUD에서 정리된 회의 내용을 복사하여 여기에 붙여넣으세요."></textarea></label>
+
+    <div class="form-section-title">F/U 사항</div>
+    <div class="follow-up-editor-head">
+      <span>업무내용 · 담당자 · 기간을 입력합니다.</span>
+      <button id="addImportFollowUp" class="secondary compact-btn" type="button">+ F/U 추가</button>
+    </div>
+    <div id="importFollowUpItems" class="follow-up-editor"></div>
     <div id="importStatus" class="save-status hidden"></div>
     <div class="dialog-actions"><button type="button" class="secondary" id="cancelImport">취소</button><button id="importSaveBtn" class="primary" type="submit">저장</button></div>
   </form></dialog>
@@ -82,12 +152,30 @@
     <div class="dialog-head"><h2>회의록 수정</h2><button type="button" class="icon" id="closeEdit">×</button></div>
     <p class="dialog-note">원본 한국어 회의록을 수정합니다. 수정 중인 내용은 20분마다 서버에 자동 저장됩니다.</p>
     <div id="editAutoSaveStatus" class="auto-save-status">자동저장 대기 중</div>
-    <label>회의 제목<input id="editTitle" required/></label>
-    <label>회의 일시<input id="editDate" type="datetime-local"/></label>
-    <label>작성자<input id="editAuthor" placeholder="작성자 이름"/></label>
-    <label>폴더<select id="editFolder"><option value="">미분류</option></select></label>
-    <label>AI 요약<textarea id="editSummary" rows="7"></textarea></label>
-    <label>전체 전사<textarea id="editTranscript" rows="14" required></textarea></label>
+    <div class="form-section-title">회의개요</div>
+    <label>회의명<input id="editTitle" required/></label>
+    <div class="form-grid-2">
+      <label>회의 일시<input id="editDate" type="datetime-local"/></label>
+      <label>회의장소<input id="editLocation"/></label>
+      <label>회의방식<input id="editMethod"/></label>
+      <label>참석자<input id="editParticipants" placeholder="쉼표로 구분"/></label>
+      <label>작성자<input id="editAuthor" placeholder="작성자 이름"/></label>
+      <label>폴더<select id="editFolder"><option value="">미분류</option></select></label>
+    </div>
+    <label>회의목적<textarea id="editPurpose" rows="3"></textarea></label>
+
+    <div class="form-section-title">요약</div>
+    <label>회의 요약<textarea id="editSummary" rows="6"></textarea></label>
+
+    <div class="form-section-title">회의 세부사항</div>
+    <label>회의 세부사항<textarea id="editTranscript" rows="14" required></textarea></label>
+
+    <div class="form-section-title">F/U 사항</div>
+    <div class="follow-up-editor-head">
+      <span>업무내용 · 담당자 · 기간을 입력합니다.</span>
+      <button id="addEditFollowUp" class="secondary compact-btn" type="button">+ F/U 추가</button>
+    </div>
+    <div id="editFollowUpItems" class="follow-up-editor"></div>
     <div class="dialog-actions"><button type="button" class="secondary" id="cancelEdit">취소</button><button class="primary" type="submit">수정 저장</button></div>
   </form></dialog>
 
@@ -159,8 +247,8 @@
   </div></dialog>
 
 
-  <script src="/config.js?v=20260825-folder-tree-move-v2"></script>
-  <script src="/app.js?v=20260825-folder-tree-move-v2"></script>
+  <script src="/config.js?v=20260826-fu-calendar-v5"></script>
+  <script src="/app.js?v=20260826-fu-calendar-v5"></script>
   <script>
     setTimeout(() => {
       if (!window.MEETING_APP_LOADED) {

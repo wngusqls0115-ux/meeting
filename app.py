@@ -233,6 +233,10 @@ def init_db():
                 updated_at TEXT,
                 folder_id BIGINT,
                 author TEXT,
+                location TEXT,
+                meeting_method TEXT,
+                purpose TEXT,
+                follow_up TEXT,
                 FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL
             )
             """,
@@ -243,11 +247,29 @@ def init_db():
                 recorded_at TEXT,
                 author TEXT,
                 folder_id BIGINT,
+                location TEXT,
+                meeting_method TEXT,
+                participants TEXT,
+                purpose TEXT,
                 transcript TEXT,
                 summary TEXT,
+                follow_up TEXT,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS follow_up_items (
+                id BIGSERIAL PRIMARY KEY,
+                meeting_id BIGINT NOT NULL,
+                task TEXT NOT NULL,
+                owner TEXT,
+                start_date TEXT,
+                end_date TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
             )
             """,
             """
@@ -276,6 +298,16 @@ def init_db():
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS updated_at TEXT",
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS folder_id BIGINT",
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS author TEXT",
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS location TEXT",
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS meeting_method TEXT",
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS purpose TEXT",
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS follow_up TEXT",
+            "ALTER TABLE drafts ADD COLUMN IF NOT EXISTS location TEXT",
+            "ALTER TABLE drafts ADD COLUMN IF NOT EXISTS meeting_method TEXT",
+            "ALTER TABLE drafts ADD COLUMN IF NOT EXISTS participants TEXT",
+            "ALTER TABLE drafts ADD COLUMN IF NOT EXISTS purpose TEXT",
+            "ALTER TABLE drafts ADD COLUMN IF NOT EXISTS follow_up TEXT",
+            "ALTER TABLE drafts ADD COLUMN IF NOT EXISTS follow_up_items_json TEXT",
             "ALTER TABLE folders ADD COLUMN IF NOT EXISTS parent_id BIGINT",
             "ALTER TABLE folders ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT '#4F6B8A'",
         ]
@@ -325,6 +357,10 @@ def init_db():
                 updated_at TEXT,
                 folder_id INTEGER,
                 author TEXT,
+                location TEXT,
+                meeting_method TEXT,
+                purpose TEXT,
+                follow_up TEXT,
                 FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL
             );
 
@@ -334,11 +370,28 @@ def init_db():
                 recorded_at TEXT,
                 author TEXT,
                 folder_id INTEGER,
+                location TEXT,
+                meeting_method TEXT,
+                participants TEXT,
+                purpose TEXT,
                 transcript TEXT,
                 summary TEXT,
+                follow_up TEXT,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS follow_up_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                meeting_id INTEGER NOT NULL,
+                task TEXT NOT NULL,
+                owner TEXT,
+                start_date TEXT,
+                end_date TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS shares (
@@ -370,6 +423,28 @@ def init_db():
             conn.execute("ALTER TABLE meetings ADD COLUMN folder_id INTEGER")
         if "author" not in columns:
             conn.execute("ALTER TABLE meetings ADD COLUMN author TEXT")
+        if "location" not in columns:
+            conn.execute("ALTER TABLE meetings ADD COLUMN location TEXT")
+        if "meeting_method" not in columns:
+            conn.execute("ALTER TABLE meetings ADD COLUMN meeting_method TEXT")
+        if "purpose" not in columns:
+            conn.execute("ALTER TABLE meetings ADD COLUMN purpose TEXT")
+        if "follow_up" not in columns:
+            conn.execute("ALTER TABLE meetings ADD COLUMN follow_up TEXT")
+
+        draft_columns = {r[1] for r in conn.execute("PRAGMA table_info(drafts)").fetchall()}
+        if "location" not in draft_columns:
+            conn.execute("ALTER TABLE drafts ADD COLUMN location TEXT")
+        if "meeting_method" not in draft_columns:
+            conn.execute("ALTER TABLE drafts ADD COLUMN meeting_method TEXT")
+        if "participants" not in draft_columns:
+            conn.execute("ALTER TABLE drafts ADD COLUMN participants TEXT")
+        if "purpose" not in draft_columns:
+            conn.execute("ALTER TABLE drafts ADD COLUMN purpose TEXT")
+        if "follow_up" not in draft_columns:
+            conn.execute("ALTER TABLE drafts ADD COLUMN follow_up TEXT")
+        if "follow_up_items_json" not in draft_columns:
+            conn.execute("ALTER TABLE drafts ADD COLUMN follow_up_items_json TEXT")
 
         folder_columns = {r[1] for r in conn.execute("PRAGMA table_info(folders)").fetchall()}
         if "parent_id" not in folder_columns:
@@ -441,13 +516,26 @@ class MeetingFolderMoveIn(BaseModel):
     folder_id: Optional[int] = None
 
 
+class FollowUpItemIn(BaseModel):
+    task: str
+    owner: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+
 class DraftIn(BaseModel):
     title: Optional[str] = None
     recorded_at: Optional[str] = None
     author: Optional[str] = None
     folder_id: Optional[int] = None
+    location: Optional[str] = None
+    meeting_method: Optional[str] = None
+    participants: Optional[list[str] | str] = None
+    purpose: Optional[str] = None
     transcript: Optional[str] = None
     summary: Optional[str] = None
+    follow_up: Optional[str] = None
+    follow_up_items: Optional[list[FollowUpItemIn]] = None
 
 
 class MeetingIn(BaseModel):
@@ -459,6 +547,11 @@ class MeetingIn(BaseModel):
     source: str = "manual"
     folder_id: Optional[int] = None
     author: Optional[str] = None
+    location: Optional[str] = None
+    meeting_method: Optional[str] = None
+    purpose: Optional[str] = None
+    follow_up: Optional[str] = None
+    follow_up_items: Optional[list[FollowUpItemIn]] = None
 
 
 class MeetingUpdate(BaseModel):
@@ -469,6 +562,11 @@ class MeetingUpdate(BaseModel):
     participants: Optional[list[str] | str] = None
     folder_id: Optional[int] = None
     author: Optional[str] = None
+    location: Optional[str] = None
+    meeting_method: Optional[str] = None
+    purpose: Optional[str] = None
+    follow_up: Optional[str] = None
+    follow_up_items: Optional[list[FollowUpItemIn]] = None
 
 
 class ShareIn(BaseModel):
@@ -478,6 +576,97 @@ class ShareIn(BaseModel):
 class TranslationIn(BaseModel):
     target_language: str = Field(pattern="^(en|ja)$")
     force_refresh: bool = False
+
+
+def validate_follow_up_date(value: str | None, field_name: str):
+    if not value:
+        return None
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"{field_name}은 YYYY-MM-DD 형식이어야 합니다.")
+    return value
+
+
+def normalize_follow_up_items(items):
+    normalized = []
+    for item in items or []:
+        task = (item.task or "").strip()
+        owner = (item.owner or "").strip() or None
+        start_date = validate_follow_up_date(item.start_date, "F/U 시작일")
+        end_date = validate_follow_up_date(item.end_date, "F/U 종료일")
+        if not task and not owner and not start_date and not end_date:
+            continue
+        if not task:
+            raise HTTPException(status_code=400, detail="F/U 업무내용을 입력해 주세요.")
+        if start_date and end_date and end_date < start_date:
+            raise HTTPException(status_code=400, detail="F/U 종료일은 시작일보다 빠를 수 없습니다.")
+        normalized.append({
+            "task": task,
+            "owner": owner,
+            "start_date": start_date,
+            "end_date": end_date,
+        })
+    return normalized
+
+
+def follow_up_items_to_text(items):
+    lines = []
+    for item in items or []:
+        period = ""
+        if item.get("start_date") and item.get("end_date"):
+            period = f"{item['start_date']} ~ {item['end_date']}"
+        elif item.get("start_date"):
+            period = item["start_date"]
+        elif item.get("end_date"):
+            period = f"~ {item['end_date']}"
+        meta = " / ".join(x for x in [item.get("owner"), period] if x)
+        lines.append(f"- {item['task']}" + (f" ({meta})" if meta else ""))
+    return "\n".join(lines) or None
+
+
+def replace_follow_up_items(conn, meeting_id: int, items):
+    normalized = normalize_follow_up_items(items)
+    conn.execute("DELETE FROM follow_up_items WHERE meeting_id=?", (meeting_id,))
+    now = now_iso()
+    for item in normalized:
+        conn.execute(
+            """
+            INSERT INTO follow_up_items(
+                meeting_id, task, owner, start_date, end_date, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                meeting_id,
+                item["task"],
+                item["owner"],
+                item["start_date"],
+                item["end_date"],
+                now,
+                now,
+            ),
+        )
+    return normalized
+
+
+def get_follow_up_items(meeting_id: int):
+    conn = db()
+    rows = conn.execute(
+        """
+        SELECT id, meeting_id, task, owner, start_date, end_date, created_at, updated_at
+        FROM follow_up_items
+        WHERE meeting_id=?
+        ORDER BY
+          CASE WHEN start_date IS NULL THEN 1 ELSE 0 END,
+          start_date,
+          CASE WHEN end_date IS NULL THEN 1 ELSE 0 END,
+          end_date,
+          id
+        """,
+        (meeting_id,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def normalize_participants(value):
@@ -623,13 +812,17 @@ def create_meeting(payload: MeetingIn):
     now = now_iso()
     conn = db()
     try:
+        normalized_fu = normalize_follow_up_items(payload.follow_up_items)
+        follow_up_text = (payload.follow_up or "").strip() or follow_up_items_to_text(normalized_fu)
+
         cur = conn.execute(
             """
             INSERT INTO meetings(
                 title, recorded_at, transcript, summary, participants,
-                source, created_at, updated_at, folder_id, author
+                source, created_at, updated_at, folder_id, author,
+                location, meeting_method, purpose, follow_up
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.title.strip() or "제목 없는 회의",
@@ -642,28 +835,30 @@ def create_meeting(payload: MeetingIn):
                 now,
                 payload.folder_id,
                 (payload.author or "").strip() or None,
+                (payload.location or "").strip() or None,
+                (payload.meeting_method or "").strip() or None,
+                (payload.purpose or "").strip() or None,
+                follow_up_text,
             ),
         )
-        conn.commit()
         meeting_id = cur.lastrowid
+        replace_follow_up_items(conn, meeting_id, payload.follow_up_items)
+        conn.commit()
 
         row = conn.execute(
             """
-            SELECT m.*, f.name AS folder_name
+            SELECT m.*, f.name AS folder_name, f.color AS folder_color
             FROM meetings m
             LEFT JOIN folders f ON f.id = m.folder_id
             WHERE m.id=?
             """,
             (meeting_id,),
         ).fetchone()
-
         if not row:
-            raise HTTPException(
-                status_code=500,
-                detail="회의록 INSERT 후 DB 재조회에 실패했습니다."
-            )
+            raise HTTPException(status_code=500, detail="회의록 INSERT 후 DB 재조회에 실패했습니다.")
 
         result = row_to_meeting(row)
+        result["follow_up_items"] = get_follow_up_items(meeting_id)
         result["saved"] = True
         result["storage_backend"] = "postgresql" if USE_POSTGRES else "sqlite_ephemeral"
         return result
@@ -691,7 +886,9 @@ def get_original_meeting(meeting_id: int):
     conn.close()
     if not row:
         raise HTTPException(status_code=404, detail="Meeting not found")
-    return row_to_meeting(row)
+    result = row_to_meeting(row)
+    result["follow_up_items"] = get_follow_up_items(meeting_id)
+    return result
 
 
 def get_translation(meeting_id: int, language: str):
@@ -1023,7 +1220,14 @@ def get_current_draft(user=Depends(require_user)):
         (user["id"],),
     ).fetchone()
     conn.close()
-    return {"draft": dict(row) if row else None}
+    if not row:
+        return {"draft": None}
+    result = dict(row)
+    try:
+        result["follow_up_items"] = json.loads(result.get("follow_up_items_json") or "[]")
+    except Exception:
+        result["follow_up_items"] = []
+    return {"draft": result}
 
 
 @app.put("/api/drafts/current")
@@ -1035,19 +1239,30 @@ def save_current_draft(payload: DraftIn, user=Depends(require_user)):
             conn.close()
             raise HTTPException(status_code=404, detail="자동저장할 폴더를 찾을 수 없습니다.")
 
+    normalized_fu = normalize_follow_up_items(payload.follow_up_items)
+    fu_json = json.dumps(normalized_fu, ensure_ascii=False)
+
     conn.execute(
         """
         INSERT INTO drafts(
-            user_id, title, recorded_at, author, folder_id, transcript, summary, updated_at
+            user_id, title, recorded_at, author, folder_id,
+            location, meeting_method, participants, purpose,
+            transcript, summary, follow_up, follow_up_items_json, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
             title=excluded.title,
             recorded_at=excluded.recorded_at,
             author=excluded.author,
             folder_id=excluded.folder_id,
+            location=excluded.location,
+            meeting_method=excluded.meeting_method,
+            participants=excluded.participants,
+            purpose=excluded.purpose,
             transcript=excluded.transcript,
             summary=excluded.summary,
+            follow_up=excluded.follow_up,
+            follow_up_items_json=excluded.follow_up_items_json,
             updated_at=excluded.updated_at
         """,
         (
@@ -1056,15 +1271,23 @@ def save_current_draft(payload: DraftIn, user=Depends(require_user)):
             payload.recorded_at,
             (payload.author or "").strip() or None,
             payload.folder_id,
+            (payload.location or "").strip() or None,
+            (payload.meeting_method or "").strip() or None,
+            normalize_participants(payload.participants),
+            (payload.purpose or "").strip() or None,
             payload.transcript or "",
             payload.summary,
+            payload.follow_up or follow_up_items_to_text(normalized_fu),
+            fu_json,
             now_iso(),
         ),
     )
     conn.commit()
     row = conn.execute("SELECT * FROM drafts WHERE user_id=?", (user["id"],)).fetchone()
     conn.close()
-    return {"ok": True, "draft": dict(row)}
+    result = dict(row)
+    result["follow_up_items"] = normalized_fu
+    return {"ok": True, "draft": result}
 
 
 @app.delete("/api/drafts/current")
@@ -1303,6 +1526,54 @@ def add_meeting(payload: MeetingIn, user=Depends(require_user)):
     return create_meeting(payload)
 
 
+@app.get("/api/follow-ups/calendar")
+def follow_up_calendar(month: str, user=Depends(require_user)):
+    if not re.fullmatch(r"\d{4}-\d{2}", month or ""):
+        raise HTTPException(status_code=400, detail="month는 YYYY-MM 형식이어야 합니다.")
+    try:
+        year, month_num = [int(x) for x in month.split("-")]
+        first = datetime(year, month_num, 1)
+        if month_num == 12:
+            next_month = datetime(year + 1, 1, 1)
+        else:
+            next_month = datetime(year, month_num + 1, 1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="유효하지 않은 월입니다.")
+
+    first_date = first.strftime("%Y-%m-%d")
+    last_date = (next_month - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    conn = db()
+    rows = conn.execute(
+        """
+        SELECT
+            fu.id, fu.meeting_id, fu.task, fu.owner, fu.start_date, fu.end_date,
+            m.title AS meeting_title,
+            m.folder_id,
+            f.name AS folder_name,
+            f.color AS folder_color
+        FROM follow_up_items fu
+        JOIN meetings m ON m.id = fu.meeting_id
+        LEFT JOIN folders f ON f.id = m.folder_id
+        WHERE
+            (fu.start_date IS NOT NULL OR fu.end_date IS NOT NULL)
+            AND COALESCE(fu.end_date, fu.start_date) >= ?
+            AND COALESCE(fu.start_date, fu.end_date) <= ?
+        ORDER BY
+            COALESCE(fu.start_date, fu.end_date),
+            COALESCE(fu.end_date, fu.start_date),
+            fu.id
+        """,
+        (first_date, last_date),
+    ).fetchall()
+    conn.close()
+
+    return {
+        "month": month,
+        "items": [dict(r) for r in rows],
+    }
+
+
 @app.get("/api/meetings")
 def list_meetings(q: str = "", folder: str = "all", user=Depends(require_user)):
     conn = db()
@@ -1439,40 +1710,66 @@ def move_meeting_folder(meeting_id: int, payload: MeetingFolderMoveIn, user=Depe
 def update_meeting(meeting_id: int, payload: MeetingUpdate, user=Depends(require_user)):
     get_original_meeting(meeting_id)
     conn = db()
-    conn.execute(
-        """
-        UPDATE meetings
-        SET title=?, recorded_at=?, transcript=?, summary=?, participants=?, updated_at=?, folder_id=?, author=?
-        WHERE id=?
-        """,
-        (
-            payload.title.strip() or "제목 없는 회의",
-            payload.recorded_at,
-            payload.transcript,
-            payload.summary,
-            normalize_participants(payload.participants),
-            now_iso(),
-            payload.folder_id,
-            (payload.author or "").strip() or None,
-            meeting_id,
-        ),
-    )
-    conn.execute("DELETE FROM translations WHERE meeting_id=?", (meeting_id,))
-    conn.commit()
-    row = conn.execute(
-        """
-        SELECT m.*, f.name AS folder_name, f.color AS folder_color
-        FROM meetings m
-        LEFT JOIN folders f ON f.id = m.folder_id
-        WHERE m.id=?
-        """,
-        (meeting_id,),
-    ).fetchone()
-    conn.close()
-    result = row_to_meeting(row)
-    result["available_translations"] = []
-    result["language"] = "ko"
-    return result
+    try:
+        normalized_fu = normalize_follow_up_items(payload.follow_up_items) if payload.follow_up_items is not None else None
+        follow_up_text = (payload.follow_up or "").strip() or (
+            follow_up_items_to_text(normalized_fu) if normalized_fu is not None else None
+        )
+
+        if normalized_fu is None:
+            existing = conn.execute("SELECT follow_up FROM meetings WHERE id=?", (meeting_id,)).fetchone()
+            follow_up_text = follow_up_text or (existing["follow_up"] if existing else None)
+
+        conn.execute(
+            """
+            UPDATE meetings
+            SET title=?, recorded_at=?, transcript=?, summary=?, participants=?,
+                updated_at=?, folder_id=?, author=?, location=?, meeting_method=?,
+                purpose=?, follow_up=?
+            WHERE id=?
+            """,
+            (
+                payload.title.strip() or "제목 없는 회의",
+                payload.recorded_at,
+                payload.transcript,
+                payload.summary,
+                normalize_participants(payload.participants),
+                now_iso(),
+                payload.folder_id,
+                (payload.author or "").strip() or None,
+                (payload.location or "").strip() or None,
+                (payload.meeting_method or "").strip() or None,
+                (payload.purpose or "").strip() or None,
+                follow_up_text,
+                meeting_id,
+            ),
+        )
+
+        if normalized_fu is not None:
+            replace_follow_up_items(conn, meeting_id, payload.follow_up_items)
+
+        conn.execute("DELETE FROM translations WHERE meeting_id=?", (meeting_id,))
+        conn.commit()
+
+        row = conn.execute(
+            """
+            SELECT m.*, f.name AS folder_name, f.color AS folder_color
+            FROM meetings m
+            LEFT JOIN folders f ON f.id = m.folder_id
+            WHERE m.id=?
+            """,
+            (meeting_id,),
+        ).fetchone()
+        result = row_to_meeting(row)
+        result["follow_up_items"] = get_follow_up_items(meeting_id)
+        result["available_translations"] = []
+        result["language"] = "ko"
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 @app.post("/api/meetings/{meeting_id}/translate")

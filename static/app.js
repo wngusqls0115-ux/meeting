@@ -25,11 +25,15 @@ let currentUser = null;
 let translationConfigured = true;
 let currentFolder = 'all';
 let foldersCache = [];
+let calendarCursor = new Date();
+calendarCursor = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth(), 1);
+let calendarItems = [];
 let folderCreateParentId = null;
 let folderCreateColor = "#536878";
 let folderColorTarget = null;
 let folderRenameTarget = null;
 let folderMoveTarget = null;
+let folderContextTarget = null;
 
 const COLLAPSED_FOLDERS_KEY = "meeting_collapsed_folders_v1";
 let collapsedFolderIds = new Set();
@@ -78,8 +82,13 @@ function saveImportDraft(){
     recorded_at: $("#importDate")?.value || "",
     folder_id: $("#importFolder")?.value || "",
     author: $("#importAuthor")?.value || "",
+    location: $("#importLocation")?.value || "",
+    meeting_method: $("#importMethod")?.value || "",
+    participants: $("#importParticipants")?.value || "",
+    purpose: $("#importPurpose")?.value || "",
     transcript: $("#importTranscript")?.value || "",
     summary: $("#importSummary")?.value || "",
+    follow_up_items: collectFollowUpItems("importFollowUpItems"),
     saved_at: new Date().toISOString()
   };
   try {
@@ -107,8 +116,13 @@ function restoreImportDraft(){
     $("#importTitle").value = d.title || "";
     $("#importDate").value = d.recorded_at || "";
     $("#importAuthor").value = d.author || currentUser?.display_name || currentUser?.email || "";
+    $("#importLocation").value = d.location || "";
+    $("#importMethod").value = d.meeting_method || "";
+    $("#importParticipants").value = participantText(d.participants).replace("-", "");
+    $("#importPurpose").value = d.purpose || "";
     $("#importTranscript").value = d.transcript || "";
     $("#importSummary").value = d.summary || "";
+    setFollowUpEditor("importFollowUpItems", d.follow_up_items || [], "import");
     populateFolderSelects();
     if(d.folder_id && [...$("#importFolder").options].some(o => o.value === String(d.folder_id))){
       $("#importFolder").value = String(d.folder_id);
@@ -136,8 +150,13 @@ async function saveServerDraft(){
       recorded_at:$("#importDate")?.value || null,
       author:$("#importAuthor")?.value.trim() || null,
       folder_id:$("#importFolder")?.value ? Number($("#importFolder").value) : null,
+      location:$("#importLocation")?.value.trim() || null,
+      meeting_method:$("#importMethod")?.value.trim() || null,
+      participants:$("#importParticipants")?.value.trim() || null,
+      purpose:$("#importPurpose")?.value.trim() || null,
       transcript,
-      summary:summary.trim() || null
+      summary:summary.trim() || null,
+      follow_up_items:collectFollowUpItems("importFollowUpItems")
     })
   });
   return !!data.ok;
@@ -152,8 +171,13 @@ async function restoreServerDraft(){
     $("#importTitle").value = d.title || "";
     $("#importDate").value = d.recorded_at || "";
     $("#importAuthor").value = d.author || currentUser?.display_name || currentUser?.email || "";
+    $("#importLocation").value = d.location || "";
+    $("#importMethod").value = d.meeting_method || "";
+    $("#importParticipants").value = participantText(d.participants).replace("-", "");
+    $("#importPurpose").value = d.purpose || "";
     $("#importTranscript").value = d.transcript || "";
     $("#importSummary").value = d.summary || "";
+    setFollowUpEditor("importFollowUpItems", d.follow_up_items || [], "import");
     populateFolderSelects();
     if(d.folder_id && [...$("#importFolder").options].some(o => o.value === String(d.folder_id))){
       $("#importFolder").value = String(d.folder_id);
@@ -184,11 +208,15 @@ async function autoSaveExistingEdit(){
       body:JSON.stringify({
         title:$("#editTitle").value.trim(),
         recorded_at:$("#editDate").value||null,
+        location:$("#editLocation").value.trim()||null,
+        meeting_method:$("#editMethod").value.trim()||null,
+        participants:$("#editParticipants").value.trim()||null,
+        author:$("#editAuthor").value.trim()||null,
+        folder_id:$("#editFolder").value?Number($("#editFolder").value):null,
+        purpose:$("#editPurpose").value.trim()||null,
         summary:$("#editSummary").value.trim()||null,
         transcript:$("#editTranscript").value,
-        participants:currentMeeting?.participants||null,
-        folder_id:$("#editFolder").value?Number($("#editFolder").value):null,
-        author:$("#editAuthor").value.trim()||null
+        follow_up_items:collectFollowUpItems("editFollowUpItems")
       })
     });
     currentMeeting = m;
@@ -342,9 +370,51 @@ function folderDisplayLabel(value){
   return f ? f.name : "미분류";
 }
 
+function closeFolderContextMenu(){
+  const menu = $("#folderContextMenu");
+  if(menu) menu.classList.add("hidden");
+  folderContextTarget = null;
+}
+
+function renderFolderContextPalette(folder){
+  const container = $("#folderContextPalette");
+  container.innerHTML = "";
+  FOLDER_COLORS.forEach(item => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "folder-context-color" + (item.hex === (folder.color || "#536878") ? " selected" : "");
+    btn.title = `${item.name} · ${item.hex}`;
+    btn.setAttribute("aria-label", item.name);
+    btn.innerHTML = `<span style="background:${item.hex}"></span><small>${escapeHtml(item.name)}</small>`;
+    btn.onclick = async e => {
+      e.stopPropagation();
+      try {
+        await updateFolderAppearance(folder, item.hex);
+        closeFolderContextMenu();
+      } catch {}
+    };
+    container.appendChild(btn);
+  });
+}
+
+function openFolderContextMenu(folder, clientX, clientY){
+  folderContextTarget = folder;
+  const menu = $("#folderContextMenu");
+  $("#folderContextTitle").textContent = folder.name;
+  renderFolderContextPalette(folder);
+  menu.classList.remove("hidden");
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+  const rect = menu.getBoundingClientRect();
+  const pad = 8;
+  const x = Math.max(pad, Math.min(clientX, window.innerWidth - rect.width - pad));
+  const y = Math.max(pad, Math.min(clientY, window.innerHeight - rect.height - pad));
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+}
+
 function renderFolders(data){
   folderListEl.innerHTML = "";
-
   const folders = data.folders || [];
   const children = new Map();
   folders.forEach(f => {
@@ -369,7 +439,6 @@ function renderFolders(data){
       await loadMeetings($("#search").value);
     };
     row.appendChild(btn);
-
     if(value === "uncategorized"){
       row.addEventListener("dragover", e => {
         if(e.dataTransfer.types.includes("text/meeting-id")){
@@ -390,12 +459,31 @@ function renderFolders(data){
 
   function addFolderRow(f, depth){
     const row = document.createElement("div");
-    row.className = "folder-row" + (String(currentFolder) === String(f.id) ? " active" : "");
+    row.className = "folder-row user-folder-row" + (String(currentFolder) === String(f.id) ? " active" : "");
     row.dataset.folderValue = String(f.id);
+    row.draggable = true;
+    row.title = "드래그하여 폴더 이동 · 오른쪽 클릭하여 이름/색상 변경";
 
+    row.addEventListener("dragstart", e => {
+      if(e.target.closest("button")){
+        e.preventDefault();
+        return;
+      }
+      closeFolderContextMenu();
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("application/x-folder-id", String(f.id));
+      e.dataTransfer.setData("text/plain", `folder:${f.id}`);
+      row.classList.add("folder-dragging");
+      document.body.classList.add("folder-drag-active");
+    });
+    row.addEventListener("dragend", () => {
+      row.classList.remove("folder-dragging");
+      document.body.classList.remove("folder-drag-active");
+    });
     row.addEventListener("dragover", e => {
       if(e.dataTransfer.types.includes("application/x-folder-id") || e.dataTransfer.types.includes("text/meeting-id")){
         e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
         row.classList.add("drag-over");
       }
     });
@@ -404,36 +492,28 @@ function renderFolders(data){
       e.preventDefault();
       e.stopPropagation();
       row.classList.remove("drag-over");
-
+      document.body.classList.remove("folder-drag-active");
       const draggedFolderId = Number(e.dataTransfer.getData("application/x-folder-id"));
       if(draggedFolderId){
-        if(draggedFolderId !== Number(f.id)) await moveFolderToParent(draggedFolderId, Number(f.id));
+        if(draggedFolderId !== Number(f.id)){
+          try { await moveFolderToParent(draggedFolderId, Number(f.id)); }
+          catch(err){ showToast("폴더 이동 실패: " + err.message, "error"); }
+        }
         return;
       }
-
       const meetingId = Number(e.dataTransfer.getData("text/meeting-id"));
       if(meetingId) await moveMeetingToFolder(meetingId, Number(f.id), f.name);
+    });
+    row.addEventListener("contextmenu", e => {
+      e.preventDefault();
+      e.stopPropagation();
+      openFolderContextMenu(f, e.clientX, e.clientY);
     });
 
     const indent = document.createElement("span");
     indent.className = "folder-indent";
     indent.style.width = `${depth * 16}px`;
     row.appendChild(indent);
-
-    const dragHandle = document.createElement("span");
-    dragHandle.className = "folder-drag-handle";
-    dragHandle.textContent = "⋮⋮";
-    dragHandle.title = "드래그하여 폴더 이동";
-    dragHandle.draggable = true;
-    dragHandle.addEventListener("dragstart", e => {
-      e.stopPropagation();
-      e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData("application/x-folder-id", String(f.id));
-      e.dataTransfer.setData("text/plain", `folder:${f.id}`);
-      row.classList.add("folder-dragging");
-    });
-    dragHandle.addEventListener("dragend", () => row.classList.remove("folder-dragging"));
-    row.appendChild(dragHandle);
 
     const childRows = children.get(String(f.id)) || [];
     const toggle = document.createElement("button");
@@ -446,8 +526,7 @@ function renderFolders(data){
       toggle.onclick = e => {
         e.stopPropagation();
         const key = String(f.id);
-        if(collapsedFolderIds.has(key)) collapsedFolderIds.delete(key);
-        else collapsedFolderIds.add(key);
+        if(collapsedFolderIds.has(key)) collapsedFolderIds.delete(key); else collapsedFolderIds.add(key);
         persistCollapsedFolders();
         renderFolders(data);
       };
@@ -462,11 +541,6 @@ function renderFolders(data){
     btn.type = "button";
     btn.className = "folder-filter-btn tree-folder-btn";
     btn.innerHTML = `<span class="folder-color-dot" style="background:${escapeHtml(f.color || "#536878")}"></span><span class="folder-label">${escapeHtml(f.name)}</span><span class="folder-count">${Number(f.meeting_count || 0)}</span>`;
-    btn.ondblclick = e => {
-      e.preventDefault();
-      e.stopPropagation();
-      openFolderRenameDialog(f);
-    };
     btn.onclick = async () => {
       currentFolder = String(f.id);
       currentMeetingId = null;
@@ -475,31 +549,12 @@ function renderFolders(data){
       renderFolders(data);
       await loadMeetings($("#search").value);
     };
+    btn.oncontextmenu = e => {
+      e.preventDefault();
+      e.stopPropagation();
+      openFolderContextMenu(f, e.clientX, e.clientY);
+    };
     row.appendChild(btn);
-
-    const edit = document.createElement("button");
-    edit.type = "button";
-    edit.className = "folder-edit-btn";
-    edit.textContent = "✎";
-    edit.title = `"${f.name}" 폴더명 수정`;
-    edit.onclick = e => { e.stopPropagation(); openFolderRenameDialog(f); };
-    row.appendChild(edit);
-
-    const move = document.createElement("button");
-    move.type = "button";
-    move.className = "folder-move-btn";
-    move.textContent = "⇄";
-    move.title = `"${f.name}" 폴더 이동`;
-    move.onclick = e => { e.stopPropagation(); openFolderMoveDialog(f); };
-    row.appendChild(move);
-
-    const color = document.createElement("button");
-    color.type = "button";
-    color.className = "folder-color-btn";
-    color.style.background = f.color || "#536878";
-    color.title = `"${f.name}" 색상 변경`;
-    color.onclick = e => { e.stopPropagation(); openFolderColorDialog(f); };
-    row.appendChild(color);
 
     const child = document.createElement("button");
     child.type = "button";
@@ -509,22 +564,8 @@ function renderFolders(data){
     child.onclick = e => { e.stopPropagation(); openFolderCreateForParent(f.id); };
     row.appendChild(child);
 
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "folder-delete-btn";
-    del.textContent = "×";
-    del.title = `"${f.name}" 폴더 삭제`;
-    del.onclick = async e => {
-      e.stopPropagation();
-      await deleteFolderDirect(Number(f.id), f.name, Number(f.meeting_count || 0));
-    };
-    row.appendChild(del);
-
     folderListEl.appendChild(row);
-
-    if(!collapsedFolderIds.has(String(f.id))){
-      childRows.forEach(c => addFolderRow(c, depth + 1));
-    }
+    if(!collapsedFolderIds.has(String(f.id))) childRows.forEach(c => addFolderRow(c, depth + 1));
   }
 
   addSystemRow("전체 회의", "all", data.total_count, "▦");
@@ -864,16 +905,240 @@ async function openMeeting(id, lang="ko"){
   await loadMeetings($("#search").value);
 }
 
+function formatFuDate(value){
+  if(!value) return "-";
+  const [y,m,d] = String(value).split("-");
+  return `${y}.${m}.${d}`;
+}
+
+function formatFuPeriod(item){
+  if(item.start_date && item.end_date) return `${formatFuDate(item.start_date)} ~ ${formatFuDate(item.end_date)}`;
+  if(item.start_date) return `${formatFuDate(item.start_date)} ~`;
+  if(item.end_date) return `~ ${formatFuDate(item.end_date)}`;
+  return "-";
+}
+
+function createFollowUpEditorRow(containerId, data={}, mode="import"){
+  const container = document.getElementById(containerId);
+  const row = document.createElement("div");
+  row.className = "follow-up-editor-row";
+  row.innerHTML = `
+    <label class="fu-task-field">업무내용<input class="fu-task" value="${escapeHtml(data.task||"")}" placeholder="예: HD 설비 FAT 일정 확정"/></label>
+    <label>담당자<input class="fu-owner" value="${escapeHtml(data.owner||"")}" placeholder="예: 홍길동"/></label>
+    <label>시작일<input class="fu-start" type="date" value="${escapeHtml(data.start_date||"")}"/></label>
+    <label>종료일<input class="fu-end" type="date" value="${escapeHtml(data.end_date||"")}"/></label>
+    <button class="fu-remove" type="button" title="F/U 삭제">×</button>`;
+  row.querySelector(".fu-remove").onclick = () => {
+    row.remove();
+    if(mode === "import") scheduleImportDraft();
+    else editDirty = true;
+  };
+  row.querySelectorAll("input").forEach(el => {
+    el.addEventListener("input", () => {
+      if(mode === "import") scheduleImportDraft();
+      else editDirty = true;
+    });
+    el.addEventListener("change", () => {
+      if(mode === "import") scheduleImportDraft();
+      else editDirty = true;
+    });
+  });
+  container.appendChild(row);
+}
+
+function setFollowUpEditor(containerId, items, mode="import"){
+  const container = document.getElementById(containerId);
+  container.innerHTML = "";
+  const list = Array.isArray(items) ? items : [];
+  if(list.length){
+    list.forEach(item => createFollowUpEditorRow(containerId, item, mode));
+  } else {
+    createFollowUpEditorRow(containerId, {}, mode);
+  }
+}
+
+function collectFollowUpItems(containerId){
+  return [...document.querySelectorAll(`#${containerId} .follow-up-editor-row`)].map(row => ({
+    task: row.querySelector(".fu-task").value.trim(),
+    owner: row.querySelector(".fu-owner").value.trim() || null,
+    start_date: row.querySelector(".fu-start").value || null,
+    end_date: row.querySelector(".fu-end").value || null,
+  })).filter(item => item.task || item.owner || item.start_date || item.end_date);
+}
+
+function renderFollowUpItems(meeting){
+  const container = $("#followUp");
+  const legacy = $("#legacyFollowUp");
+  container.innerHTML = "";
+  const items = meeting.follow_up_items || [];
+
+  if(items.length){
+    legacy.classList.add("hidden");
+    items.forEach(item => {
+      const card = document.createElement("div");
+      card.className = "follow-up-card";
+      card.innerHTML = `
+        <div class="follow-up-task">${escapeHtml(item.task)}</div>
+        <div class="follow-up-meta">
+          <span><b>담당자</b>${escapeHtml(item.owner || "-")}</span>
+          <span><b>기간</b>${escapeHtml(formatFuPeriod(item))}</span>
+        </div>`;
+      container.appendChild(card);
+    });
+  } else if(meeting.follow_up){
+    legacy.textContent = meeting.follow_up;
+    legacy.classList.remove("hidden");
+  } else {
+    legacy.textContent = "등록된 F/U 사항이 없습니다.";
+    legacy.classList.remove("hidden");
+  }
+}
+
+function ymd(date){
+  const y = date.getFullYear();
+  const m = String(date.getMonth()+1).padStart(2,"0");
+  const d = String(date.getDate()).padStart(2,"0");
+  return `${y}-${m}-${d}`;
+}
+
+function monthKey(date){
+  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}`;
+}
+
+function itemCoversDate(item, day){
+  const key = ymd(day);
+  const start = item.start_date || item.end_date;
+  const end = item.end_date || item.start_date;
+  return !!start && !!end && start <= key && key <= end;
+}
+
+async function loadCalendar(){
+  const month = monthKey(calendarCursor);
+  try {
+    const data = await api(`/api/follow-ups/calendar?month=${encodeURIComponent(month)}`);
+    calendarItems = data.items || [];
+    renderCalendar();
+  } catch(err) {
+    $("#calendarGrid").innerHTML = `<div class="calendar-error">캘린더 조회 실패</div>`;
+    $("#calendarFollowUpList").innerHTML = `<div class="calendar-empty">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderCalendar(){
+  const year = calendarCursor.getFullYear();
+  const month = calendarCursor.getMonth();
+  $("#calendarMonthLabel").textContent = `${year}년 ${month+1}월`;
+  $("#calendarFollowUpCount").textContent = String(calendarItems.length);
+
+  const first = new Date(year, month, 1);
+  const last = new Date(year, month+1, 0);
+  const grid = $("#calendarGrid");
+  grid.innerHTML = "";
+
+  for(let i=0;i<first.getDay();i++){
+    const blank = document.createElement("div");
+    blank.className = "calendar-day blank";
+    grid.appendChild(blank);
+  }
+
+  const todayKey = ymd(new Date());
+  for(let day=1;day<=last.getDate();day++){
+    const date = new Date(year, month, day);
+    const key = ymd(date);
+    const items = calendarItems.filter(item => itemCoversDate(item, date));
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "calendar-day";
+    if(key === todayKey) cell.classList.add("today");
+    if(items.length) cell.classList.add("has-followup");
+    cell.innerHTML = `<span class="calendar-day-number">${day}</span>`;
+    if(items.length){
+      const dots = document.createElement("div");
+      dots.className = "calendar-day-dots";
+      items.slice(0,3).forEach(item => {
+        const dot = document.createElement("span");
+        dot.style.background = item.folder_color || "#64748B";
+        dots.appendChild(dot);
+      });
+      if(items.length > 3){
+        const more = document.createElement("small");
+        more.textContent = `+${items.length-3}`;
+        dots.appendChild(more);
+      }
+      cell.appendChild(dots);
+      cell.title = items.map(i => `${i.task} · ${i.owner || "담당자 미정"}`).join("\n");
+    }
+    cell.onclick = () => renderCalendarFollowUpList(items.length ? items : calendarItems, key);
+    grid.appendChild(cell);
+  }
+
+  renderCalendarFollowUpList(calendarItems);
+}
+
+function renderCalendarFollowUpList(items, selectedDate=null){
+  const list = $("#calendarFollowUpList");
+  list.innerHTML = "";
+  if(selectedDate){
+    $("#calendarFollowUpCount").textContent = `${items.length} · ${selectedDate}`;
+  } else {
+    $("#calendarFollowUpCount").textContent = String(items.length);
+  }
+
+  if(!items.length){
+    list.innerHTML = `<div class="calendar-empty">해당 기간의 F/U가 없습니다.</div>`;
+    return;
+  }
+
+  items.forEach(item => {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "calendar-fu-card";
+    card.innerHTML = `
+      <span class="calendar-fu-color" style="background:${escapeHtml(item.folder_color || "#64748B")}"></span>
+      <span class="calendar-fu-main">
+        <strong>${escapeHtml(item.task)}</strong>
+        <small>${escapeHtml(item.owner || "담당자 미정")} · ${escapeHtml(formatFuPeriod(item))}</small>
+        <em>${escapeHtml(item.meeting_title || "")}</em>
+      </span>`;
+    card.onclick = async () => {
+      await openMeeting(item.meeting_id, "ko");
+    };
+    list.appendChild(card);
+  });
+}
+
+function participantText(value){
+  if(Array.isArray(value)) return value.filter(Boolean).join(", ");
+  if(value == null || value === "") return "-";
+  return String(value);
+}
+
+function safeText(value, fallback="-"){
+  const text = value == null ? "" : String(value).trim();
+  return text || fallback;
+}
+
 function renderMeeting(m){
-  $("#title").textContent=m.title;
-  $("#meta").innerHTML=[
+  $("#title").textContent = m.title || "회의록";
+
+  // Keep the top area compact. Full metadata lives in 회의개요.
+  $("#meta").innerHTML = [
     m.folder_name ? `<span class="meta-folder"><span class="folder-color-dot" style="background:${escapeHtml(m.folder_color||"#536878")}"></span>${escapeHtml(m.folder_name)}</span>` : null,
-    m.author ? `작성자: ${escapeHtml(m.author)}` : null,
-    escapeHtml(fmtDate(m.recorded_at||m.created_at)),
-    escapeHtml(m.source||"")
+    escapeHtml(fmtDate(m.recorded_at||m.created_at))
   ].filter(Boolean).join(" · ");
-  $("#summary").textContent=m.summary||"요약이 등록되지 않았습니다.";
-  $("#transcript").textContent=m.transcript;
+
+  $("#overviewTitle").textContent = safeText(m.title);
+  $("#overviewDate").textContent = safeText(fmtDate(m.recorded_at || m.created_at));
+  $("#overviewLocation").textContent = safeText(m.location);
+  $("#overviewMethod").textContent = safeText(m.meeting_method);
+  $("#overviewParticipants").textContent = participantText(m.participants);
+  $("#overviewAuthor").textContent = safeText(m.author);
+  $("#overviewPurpose").textContent = safeText(m.purpose);
+
+  $("#summary").textContent = safeText(m.summary, "요약이 등록되지 않았습니다.");
+  $("#transcript").textContent = safeText(m.transcript, "회의 세부사항이 등록되지 않았습니다.");
+  renderFollowUpItems(m);
+
   if($("#quickFolderSelect")){
     populateFolderSelects();
     $("#quickFolderSelect").value = m.folder_id ? String(m.folder_id) : "";
@@ -925,6 +1190,7 @@ async function openImport(){
   }
   populateFolderSelects();
   $("#importAuthor").value = currentUser?.display_name || currentUser?.email || "";
+  setFollowUpEditor("importFollowUpItems", [], "import");
 
   const restoredLocal = restoreImportDraft();
   if(!restoredLocal){
@@ -936,7 +1202,7 @@ async function openImport(){
   importDialog.showModal();
 }
 $("#newBtn").onclick=openImport; $("#emptyNewBtn").onclick=openImport; $("#closeImport").onclick=()=>{ saveImportDraft(); importDialog.close(); }; $("#cancelImport").onclick=()=>{ saveImportDraft(); importDialog.close(); };
-["#importTitle","#importDate","#importAuthor","#importFolder","#importTranscript","#importSummary"].forEach(sel => {
+["#importTitle","#importDate","#importLocation","#importMethod","#importParticipants","#importAuthor","#importFolder","#importPurpose","#importSummary","#importTranscript"].forEach(sel => {
   const el = $(sel);
   if(el){
     el.addEventListener("input", scheduleImportDraft);
@@ -944,10 +1210,13 @@ $("#newBtn").onclick=openImport; $("#emptyNewBtn").onclick=openImport; $("#close
   }
 });
 
+$("#addImportFollowUp").onclick = () => createFollowUpEditorRow("importFollowUpItems", {}, "import");
+$("#addEditFollowUp").onclick = () => { createFollowUpEditorRow("editFollowUpItems", {}, "edit"); editDirty = true; };
+
 $("#importForm").addEventListener("submit",async(e)=>{
   e.preventDefault();
   const transcript = $("#importTranscript").value.trim();
-  if(!transcript) return alert("전사 내용 또는 전사 파일이 필요합니다.");
+  if(!transcript) return alert("회의 세부사항을 붙여넣어 주세요.");
 
   const status = $("#importStatus");
   const saveBtn = $("#importSaveBtn");
@@ -970,7 +1239,12 @@ $("#importForm").addEventListener("submit",async(e)=>{
         summary:$("#importSummary").value.trim()||null,
         source:"manual",
         folder_id:$("#importFolder").value ? Number($("#importFolder").value) : null,
-        author:$("#importAuthor").value.trim() || null
+        author:$("#importAuthor").value.trim() || null,
+        location:$("#importLocation").value.trim() || null,
+        meeting_method:$("#importMethod").value.trim() || null,
+        participants:$("#importParticipants").value.trim() || null,
+        purpose:$("#importPurpose").value.trim() || null,
+        follow_up_items:collectFollowUpItems("importFollowUpItems")
       })
     });
 
@@ -1009,6 +1283,7 @@ $("#importForm").addEventListener("submit",async(e)=>{
       await loadFolders();
       await loadMeetings($("#search").value);
       await loadStorageStatus();
+      await loadCalendar();
     } catch(listErr) {
       listRefreshOk = false;
       console.error("List refresh after verified save failed:", listErr);
@@ -1035,10 +1310,27 @@ $("#importForm").addEventListener("submit",async(e)=>{
 
 $("#editBtn").onclick=async()=>{
   if(!currentMeetingId) return; const m=await api(`/api/meetings/${currentMeetingId}?lang=ko`);
-  populateFolderSelects(); $("#editTitle").value=m.title||""; $("#editDate").value=toLocalInput(m.recorded_at); $("#editFolder").value=m.folder_id?String(m.folder_id):""; $("#editAuthor").value=m.author||""; $("#editSummary").value=m.summary||""; $("#editTranscript").value=m.transcript||""; editDirty=false; $("#editAutoSaveStatus").textContent="20분마다 자동저장"; editDialog.showModal();
+  populateFolderSelects();
+  $("#editTitle").value=m.title||"";
+  $("#editDate").value=toLocalInput(m.recorded_at);
+  $("#editLocation").value=m.location||"";
+  $("#editMethod").value=m.meeting_method||"";
+  $("#editParticipants").value=participantText(m.participants).replace("-", "");
+  $("#editAuthor").value=m.author||"";
+  $("#editFolder").value=m.folder_id?String(m.folder_id):"";
+  $("#editPurpose").value=m.purpose||"";
+  $("#editSummary").value=m.summary||"";
+  $("#editTranscript").value=m.transcript||"";
+  const editFu = (m.follow_up_items && m.follow_up_items.length)
+    ? m.follow_up_items
+    : (m.follow_up ? [{task:m.follow_up, owner:null, start_date:null, end_date:null}] : []);
+  setFollowUpEditor("editFollowUpItems", editFu, "edit");
+  editDirty=false;
+  $("#editAutoSaveStatus").textContent="20분마다 자동저장";
+  editDialog.showModal();
 };
 $("#closeEdit").onclick=()=>editDialog.close(); $("#cancelEdit").onclick=()=>editDialog.close();
-["#editTitle","#editDate","#editAuthor","#editFolder","#editSummary","#editTranscript"].forEach(sel => {
+["#editTitle","#editDate","#editLocation","#editMethod","#editParticipants","#editAuthor","#editFolder","#editPurpose","#editSummary","#editTranscript"].forEach(sel => {
   const el = $(sel);
   if(el){
     el.addEventListener("input", () => { editDirty = true; });
@@ -1048,9 +1340,35 @@ $("#closeEdit").onclick=()=>editDialog.close(); $("#cancelEdit").onclick=()=>edi
 
 $("#editForm").addEventListener("submit",async(e)=>{
   e.preventDefault();
-  const m=await api(`/api/meetings/${currentMeetingId}`,{method:"PUT",body:JSON.stringify({title:$("#editTitle").value.trim(),recorded_at:$("#editDate").value||null,summary:$("#editSummary").value.trim()||null,transcript:$("#editTranscript").value,participants:currentMeeting?.participants||null,folder_id:$("#editFolder").value?Number($("#editFolder").value):null,author:$("#editAuthor").value.trim()||null})});
-  editDirty=false; $("#editAutoSaveStatus").textContent=`저장 완료 · ${new Date().toLocaleTimeString()}`; editDialog.close(); await loadFolders(); await openMeeting(m.id,"ko");
+  const m=await api(`/api/meetings/${currentMeetingId}`,{method:"PUT",body:JSON.stringify({
+    title:$("#editTitle").value.trim(),
+    recorded_at:$("#editDate").value||null,
+    location:$("#editLocation").value.trim()||null,
+    meeting_method:$("#editMethod").value.trim()||null,
+    participants:$("#editParticipants").value.trim()||null,
+    author:$("#editAuthor").value.trim()||null,
+    folder_id:$("#editFolder").value?Number($("#editFolder").value):null,
+    purpose:$("#editPurpose").value.trim()||null,
+    summary:$("#editSummary").value.trim()||null,
+    transcript:$("#editTranscript").value,
+    follow_up_items:collectFollowUpItems("editFollowUpItems")
+  })});
+  editDirty=false; $("#editAutoSaveStatus").textContent=`저장 완료 · ${new Date().toLocaleTimeString()}`; editDialog.close(); await loadFolders(); await loadCalendar(); await openMeeting(m.id,"ko");
 });
+
+$("#calendarPrev").onclick = async () => {
+  calendarCursor = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth()-1, 1);
+  await loadCalendar();
+};
+$("#calendarNext").onclick = async () => {
+  calendarCursor = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth()+1, 1);
+  await loadCalendar();
+};
+$("#calendarToday").onclick = async () => {
+  const now = new Date();
+  calendarCursor = new Date(now.getFullYear(), now.getMonth(), 1);
+  await loadCalendar();
+};
 
 $("#search").addEventListener("input",e=>{ clearTimeout(debounceTimer); debounceTimer=setTimeout(()=>loadMeetings(e.target.value),250); });
 $("#shareBtn").onclick=()=>{ $("#shareResult").classList.add("hidden"); $("#shareUrl").value=""; shareDialog.showModal(); };
@@ -1223,6 +1541,36 @@ $("#folderMoveForm").addEventListener("submit", async e => {
   }
 });
 
+$("#contextRenameFolder").onclick = () => {
+  if(!folderContextTarget) return;
+  const target = folderContextTarget;
+  closeFolderContextMenu();
+  openFolderRenameDialog(target);
+};
+$("#contextAddChild").onclick = () => {
+  if(!folderContextTarget) return;
+  const target = folderContextTarget;
+  closeFolderContextMenu();
+  openFolderCreateForParent(target.id);
+};
+$("#contextMoveRoot").onclick = async () => {
+  if(!folderContextTarget) return;
+  const target = folderContextTarget;
+  closeFolderContextMenu();
+  try { await moveFolderToParent(target.id, null); }
+  catch(err){ showToast("폴더 이동 실패: " + err.message, "error"); }
+};
+$("#contextDeleteFolder").onclick = async () => {
+  if(!folderContextTarget) return;
+  const target = folderContextTarget;
+  closeFolderContextMenu();
+  await deleteFolderDirect(Number(target.id), target.name, Number(target.meeting_count || 0));
+};
+document.addEventListener("click", e => { if(!e.target.closest("#folderContextMenu")) closeFolderContextMenu(); });
+document.addEventListener("scroll", closeFolderContextMenu, true);
+window.addEventListener("resize", closeFolderContextMenu);
+document.addEventListener("keydown", e => { if(e.key === "Escape") closeFolderContextMenu(); });
+
 $("#showFolderCreateBtn").onclick = () => openFolderCreateForParent(null);
 
 $("#closeFolderCreate").onclick = () => $("#folderCreateDialog").close();
@@ -1263,6 +1611,7 @@ $("#logoutBtn").onclick=async()=>{ await fetch(apiUrl("/api/auth/logout"),{metho
     }
   } catch {}
   await loadFolders();
+  await loadCalendar();
   try {
     await loadMeetings();
   } catch(err) {
