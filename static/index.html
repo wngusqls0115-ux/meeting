@@ -4,7 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>회의록</title>
-  <link rel="stylesheet" href="/styles.css?v=20260826-fu-complete-inline-v6"/>
+  <link rel="stylesheet" href="/styles.css?v=20260826-folder-toggle-fu-memo-v7"/>
 </head>
 <body>
   <div id="appErrorBanner" class="app-error-banner hidden"></div>
@@ -30,7 +30,7 @@
 
         <div id="folderInlineError" class="folder-inline-error hidden"></div>
         <div id="folderRootDropZone" class="folder-root-drop-zone">여기로 폴더를 끌면 최상위로 이동</div>
-        <div class="folder-help">폴더 행을 마우스로 끌어 다른 폴더 아래로 이동합니다. ▸/▾는 접기·펼치기, +는 하위 폴더 추가입니다. 이름·색상 변경은 폴더를 오른쪽 클릭하세요.</div>
+        <div class="folder-help">회의록과 폴더 모두 마우스로 끌어 이동할 수 있습니다. 폴더명 클릭은 회의록 펼침/접힘, ▸/▾는 하위 폴더 접기·펼치기입니다. 이름·색상 변경은 오른쪽 클릭하세요.</div>
         <div id="folderList" class="folder-list"></div>
       </section>
 
@@ -215,6 +215,24 @@
     <div id="folderColorPalette" class="color-palette" role="group" aria-label="폴더 색상 변경"></div>
   </div></dialog>
 
+  <dialog id="fuMemoDialog"><form id="fuMemoForm" method="dialog">
+    <div class="dialog-head">
+      <h2>F/U 메모</h2>
+      <button type="button" class="icon" id="closeFuMemo">×</button>
+    </div>
+    <div id="fuMemoTask" class="fu-memo-task"></div>
+    <div id="fuMemoMeta" class="fu-memo-meta"></div>
+    <label>메모
+      <textarea id="fuMemoText" rows="8" placeholder="진행상황, 확인사항, 관련자와의 협의내용 등을 기록하세요."></textarea>
+    </label>
+    <div id="fuMemoStatus" class="save-status hidden"></div>
+    <div class="dialog-actions fu-memo-actions">
+      <button type="button" class="secondary" id="goFuMeeting">연관 회의로 이동</button>
+      <button type="button" class="secondary" id="cancelFuMemo">닫기</button>
+      <button type="submit" class="primary">메모 저장</button>
+    </div>
+  </form></dialog>
+
   <dialog id="shareDialog"><form id="shareForm" method="dialog">
     <div class="dialog-head"><h2>로그인 보호 공유</h2><button type="button" class="icon" id="closeShare">×</button></div>
     <p class="dialog-note"><strong>링크 자체는 누구에게나 전달할 수 있습니다.</strong> 다만 링크를 연 사람은 반드시 로그인해야 회의 내용을 볼 수 있습니다.</p>
@@ -247,8 +265,8 @@
   </div></dialog>
 
 
-  <script src="/config.js?v=20260826-fu-complete-inline-v6"></script>
-  <script src="/app.js?v=20260826-fu-complete-inline-v6"></script>
+  <script src="/config.js?v=20260826-folder-toggle-fu-memo-v7"></script>
+  <script src="/app.js?v=20260826-folder-toggle-fu-memo-v7"></script>
   <script>
     setTimeout(() => {
       if (!window.MEETING_APP_LOADED) {

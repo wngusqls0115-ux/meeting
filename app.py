@@ -270,6 +270,7 @@ def init_db():
                 status TEXT NOT NULL DEFAULT 'open',
                 completion_note TEXT,
                 completed_date TEXT,
+                memo TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
@@ -314,6 +315,7 @@ def init_db():
             "ALTER TABLE follow_up_items ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open'",
             "ALTER TABLE follow_up_items ADD COLUMN IF NOT EXISTS completion_note TEXT",
             "ALTER TABLE follow_up_items ADD COLUMN IF NOT EXISTS completed_date TEXT",
+            "ALTER TABLE follow_up_items ADD COLUMN IF NOT EXISTS memo TEXT",
             "ALTER TABLE folders ADD COLUMN IF NOT EXISTS parent_id BIGINT",
             "ALTER TABLE folders ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT '#4F6B8A'",
         ]
@@ -398,6 +400,7 @@ def init_db():
                 status TEXT NOT NULL DEFAULT 'open',
                 completion_note TEXT,
                 completed_date TEXT,
+                memo TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
@@ -462,6 +465,8 @@ def init_db():
             conn.execute("ALTER TABLE follow_up_items ADD COLUMN completion_note TEXT")
         if "completed_date" not in fu_columns:
             conn.execute("ALTER TABLE follow_up_items ADD COLUMN completed_date TEXT")
+        if "memo" not in fu_columns:
+            conn.execute("ALTER TABLE follow_up_items ADD COLUMN memo TEXT")
 
         folder_columns = {r[1] for r in conn.execute("PRAGMA table_info(folders)").fetchall()}
         if "parent_id" not in folder_columns:
@@ -541,6 +546,7 @@ class FollowUpItemIn(BaseModel):
     status: str = "open"
     completion_note: Optional[str] = None
     completed_date: Optional[str] = None
+    memo: Optional[str] = None
 
 
 class DraftIn(BaseModel):
@@ -620,8 +626,9 @@ def normalize_follow_up_items(items):
             raise HTTPException(status_code=400, detail="F/U 상태는 open 또는 completed만 가능합니다.")
         completion_note = (item.completion_note or "").strip() or None
         completed_date = validate_follow_up_date(item.completed_date, "F/U 완료일")
+        memo = (item.memo or "").strip() or None
 
-        if not task and not owner and not start_date and not end_date and not completion_note:
+        if not task and not owner and not start_date and not end_date and not completion_note and not memo:
             continue
         if not task:
             raise HTTPException(status_code=400, detail="F/U 업무내용을 입력해 주세요.")
@@ -642,6 +649,7 @@ def normalize_follow_up_items(items):
             "status": status,
             "completion_note": completion_note,
             "completed_date": completed_date,
+            "memo": memo,
         })
     return normalized
 
@@ -674,9 +682,9 @@ def replace_follow_up_items(conn, meeting_id: int, items):
             """
             INSERT INTO follow_up_items(
                 meeting_id, task, owner, start_date, end_date,
-                status, completion_note, completed_date,
+                status, completion_note, completed_date, memo,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 meeting_id,
@@ -687,6 +695,7 @@ def replace_follow_up_items(conn, meeting_id: int, items):
                 item["status"],
                 item["completion_note"],
                 item["completed_date"],
+                item["memo"],
                 now,
                 now,
             ),
@@ -699,7 +708,7 @@ def get_follow_up_items(meeting_id: int):
     rows = conn.execute(
         """
         SELECT id, meeting_id, task, owner, start_date, end_date,
-               status, completion_note, completed_date, created_at, updated_at
+               status, completion_note, completed_date, memo, created_at, updated_at
         FROM follow_up_items
         WHERE meeting_id=?
         ORDER BY
@@ -1572,6 +1581,50 @@ def add_meeting(payload: MeetingIn, user=Depends(require_user)):
     return create_meeting(payload)
 
 
+class FollowUpMemoIn(BaseModel):
+    memo: Optional[str] = None
+
+
+@app.patch("/api/follow-ups/{follow_up_id}/memo")
+def update_follow_up_memo(
+    follow_up_id: int,
+    payload: FollowUpMemoIn,
+    user=Depends(require_user),
+):
+    conn = db()
+    row = conn.execute(
+        """
+        SELECT fu.id, fu.meeting_id
+        FROM follow_up_items fu
+        JOIN meetings m ON m.id = fu.meeting_id
+        WHERE fu.id=?
+        """,
+        (follow_up_id,),
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="F/U 항목을 찾을 수 없습니다.")
+
+    memo = (payload.memo or "").strip() or None
+    conn.execute(
+        "UPDATE follow_up_items SET memo=?, updated_at=? WHERE id=?",
+        (memo, now_iso(), follow_up_id),
+    )
+    conn.commit()
+
+    updated = conn.execute(
+        """
+        SELECT id, meeting_id, task, owner, start_date, end_date,
+               status, completion_note, completed_date, memo, created_at, updated_at
+        FROM follow_up_items
+        WHERE id=?
+        """,
+        (follow_up_id,),
+    ).fetchone()
+    conn.close()
+    return dict(updated)
+
+
 @app.get("/api/follow-ups/calendar")
 def follow_up_calendar(month: str, user=Depends(require_user)):
     if not re.fullmatch(r"\d{4}-\d{2}", month or ""):
@@ -1594,7 +1647,7 @@ def follow_up_calendar(month: str, user=Depends(require_user)):
         """
         SELECT
             fu.id, fu.meeting_id, fu.task, fu.owner, fu.start_date, fu.end_date,
-            fu.status, fu.completion_note, fu.completed_date,
+            fu.status, fu.completion_note, fu.completed_date, fu.memo,
             m.title AS meeting_title,
             m.folder_id,
             f.name AS folder_name,

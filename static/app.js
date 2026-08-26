@@ -28,6 +28,9 @@ let foldersCache = [];
 let calendarCursor = new Date();
 calendarCursor = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth(), 1);
 let calendarItems = [];
+let expandedMeetingFolderId = null;
+let folderDragInProgress = false;
+let fuMemoTarget = null;
 let folderCreateParentId = null;
 let folderCreateColor = "#536878";
 let folderColorTarget = null;
@@ -432,6 +435,7 @@ function renderFolders(data){
     btn.innerHTML = `<span class="folder-icon">${icon}</span><span class="folder-label">${escapeHtml(label)}</span><span class="folder-count">${Number(count || 0)}</span>`;
     btn.onclick = async () => {
       currentFolder = value;
+      expandedMeetingFolderId = null;
       currentMeetingId = null;
       currentMeeting = null;
       detailEl.classList.add("hidden");
@@ -458,6 +462,7 @@ function renderFolders(data){
   }
 
   function beginFolderDrag(e, row, folder){
+    folderDragInProgress = true;
     closeFolderContextMenu();
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("application/x-folder-id", String(folder.id));
@@ -483,6 +488,7 @@ function renderFolders(data){
     row.addEventListener("dragend", () => {
       row.classList.remove("folder-dragging");
       document.body.classList.remove("folder-drag-active");
+      setTimeout(() => { folderDragInProgress = false; }, 80);
     });
     row.addEventListener("dragover", e => {
       if(e.dataTransfer.types.includes("application/x-folder-id") || e.dataTransfer.types.includes("text/meeting-id")){
@@ -552,13 +558,30 @@ function renderFolders(data){
     btn.addEventListener("dragend", () => {
       row.classList.remove("folder-dragging");
       document.body.classList.remove("folder-drag-active");
+      setTimeout(() => { folderDragInProgress = false; }, 80);
     });
     btn.innerHTML = `<span class="folder-color-dot" style="background:${escapeHtml(f.color || "#536878")}"></span><span class="folder-label">${escapeHtml(f.name)}</span><span class="folder-count">${Number(f.meeting_count || 0)}</span>`;
     btn.onclick = async () => {
-      currentFolder = String(f.id);
+      if(folderDragInProgress) return;
+
+      const folderId = String(f.id);
+      const alreadyOpen = expandedMeetingFolderId === folderId;
+
+      currentFolder = folderId;
       currentMeetingId = null;
       currentMeeting = null;
       detailEl.classList.add("hidden");
+
+      if(alreadyOpen){
+        expandedMeetingFolderId = null;
+        renderFolders(data);
+        listEl.innerHTML = "";
+        listEl.classList.add("hidden");
+        emptyEl.classList.add("hidden");
+        return;
+      }
+
+      expandedMeetingFolderId = folderId;
       renderFolders(data);
       await loadMeetings($("#search").value);
     };
@@ -578,7 +601,7 @@ function renderFolders(data){
     row.appendChild(child);
 
     folderListEl.appendChild(row);
-    if(String(currentFolder) === String(f.id)){
+    if(expandedMeetingFolderId === String(f.id)){
       const inlineMeetings = document.createElement("div");
       inlineMeetings.className = "folder-inline-meetings";
       inlineMeetings.dataset.folderId = String(f.id);
@@ -900,53 +923,71 @@ async function loadMeetings(q=""){
   const rows = await api("/api/meetings?q=" + encodeURIComponent(q) + "&folder=" + encodeURIComponent(currentFolder));
 
   const specificFolder = currentFolder !== "all" && currentFolder !== "uncategorized";
+  const showInline = specificFolder && expandedMeetingFolderId === String(currentFolder);
   let target = listEl;
 
   if(specificFolder){
+    listEl.innerHTML = "";
+    listEl.classList.add("hidden");
+
+    if(!showInline){
+      emptyEl.classList.add("hidden");
+      return;
+    }
+
     let inline = document.querySelector(`.folder-inline-meetings[data-folder-id="${CSS.escape(String(currentFolder))}"]`);
     if(!inline){
-      // Rebuild the tree once so the selected folder gets its inline meeting slot.
       await loadFolders();
       inline = document.querySelector(`.folder-inline-meetings[data-folder-id="${CSS.escape(String(currentFolder))}"]`);
     }
     if(inline){
-      listEl.innerHTML = "";
-      listEl.classList.add("hidden");
       target = inline;
     } else {
-      listEl.classList.remove("hidden");
+      return;
     }
   } else {
     listEl.classList.remove("hidden");
   }
 
   target.innerHTML = "";
+
   rows.forEach(m => {
-    const btn=document.createElement("button");
-    btn.className=specificFolder ? "meeting-card inline-meeting-card" : "meeting-card";
+    const btn = document.createElement("button");
+    btn.className = showInline ? "inline-meeting-title" : "meeting-card";
     btn.draggable = true;
     btn.dataset.meetingId = String(m.id);
-    btn.addEventListener("dragstart", (e) => {
+
+    btn.addEventListener("dragstart", e => {
+      e.stopPropagation();
       e.dataTransfer.effectAllowed = "move";
       e.dataTransfer.setData("text/meeting-id", String(m.id));
       btn.classList.add("dragging");
     });
     btn.addEventListener("dragend", () => btn.classList.remove("dragging"));
-    if(m.id===currentMeetingId) btn.classList.add("active");
-    const badges=["ko",...(m.translations||[])].map(x=>`<span class="mini-lang">${x.toUpperCase()}</span>`).join("");
-    btn.innerHTML=`<strong>${escapeHtml(m.title)}</strong><span>${escapeHtml(fmtDate(m.recorded_at||m.created_at))}</span><small>${m.author ? "작성자 " + escapeHtml(m.author) + " · " : ""}${escapeHtml(m.source||"")} ${badges}</small>`;
-    btn.onclick=()=>openMeeting(m.id,"ko");
+
+    if(m.id === currentMeetingId) btn.classList.add("active");
+
+    if(showInline){
+      // Folder children intentionally show only the meeting title.
+      btn.textContent = m.title || "회의록";
+      btn.title = m.title || "회의록";
+    } else {
+      const badges=["ko",...(m.translations||[])].map(x=>`<span class="mini-lang">${x.toUpperCase()}</span>`).join("");
+      btn.innerHTML=`<strong>${escapeHtml(m.title)}</strong><span>${escapeHtml(fmtDate(m.recorded_at||m.created_at))}</span><small>${m.folder_name ? `<span class="folder-color-dot mini" style="background:${escapeHtml(m.folder_color||"#536878")}"></span>` + escapeHtml(m.folder_name) + " · " : ""}${m.author ? "작성자 " + escapeHtml(m.author) + " · " : ""}${escapeHtml(m.source||"")} ${badges}</small>`;
+    }
+
+    btn.onclick = () => openMeeting(m.id, "ko");
     target.appendChild(btn);
   });
 
-  if(specificFolder && !rows.length){
+  if(showInline && !rows.length){
     const empty = document.createElement("div");
     empty.className = "inline-meeting-empty";
     empty.textContent = "회의록 없음";
     target.appendChild(empty);
   }
 
-  emptyEl.classList.toggle("hidden", rows.length !== 0 || !!currentMeetingId);
+  emptyEl.classList.toggle("hidden", rows.length !== 0 || !!currentMeetingId || specificFolder);
 }
 async function openMeeting(id, lang="ko"){
   const m=await api(`/api/meetings/${id}?lang=${lang}`);
@@ -981,6 +1022,7 @@ function createFollowUpEditorRow(containerId, data={}, mode="import"){
     <label>상태<select class="fu-status"><option value="open"${completed ? "" : " selected"}>진행중</option><option value="completed"${completed ? " selected" : ""}>완료</option></select></label>
     <label>완료일<input class="fu-completed-date" type="date" value="${escapeHtml(data.completed_date||"")}"/></label>
     <label class="fu-completion-field">완료사항<input class="fu-completion-note" value="${escapeHtml(data.completion_note||"")}" placeholder="예: FAT 완료, 출하 승인"/></label>
+    <input class="fu-memo" type="hidden" value="${escapeHtml(data.memo||"")}"/>
     <button class="fu-remove" type="button" title="F/U 삭제">×</button>`;
 
   const statusEl = row.querySelector(".fu-status");
@@ -1033,7 +1075,8 @@ function collectFollowUpItems(containerId){
     status: row.querySelector(".fu-status").value || "open",
     completed_date: row.querySelector(".fu-completed-date").value || null,
     completion_note: row.querySelector(".fu-completion-note").value.trim() || null,
-  })).filter(item => item.task || item.owner || item.start_date || item.end_date || item.completion_note);
+    memo: row.querySelector(".fu-memo").value.trim() || null,
+  })).filter(item => item.task || item.owner || item.start_date || item.end_date || item.completion_note || item.memo);
 }
 function renderFollowUpItems(meeting){
   const container = $("#followUp");
@@ -1146,6 +1189,34 @@ function renderCalendar(){
   renderCalendarFollowUpList(calendarItems);
 }
 
+function openFuMemoDialog(item){
+  fuMemoTarget = item;
+  $("#fuMemoTask").textContent = item.task || "F/U";
+  $("#fuMemoMeta").textContent = [
+    item.owner ? `담당자: ${item.owner}` : "담당자: 미정",
+    `기간: ${formatFuPeriod(item)}`,
+    item.status === "completed" ? "상태: 완료" : "상태: 진행중",
+    item.meeting_title ? `연관 회의: ${item.meeting_title}` : null
+  ].filter(Boolean).join(" · ");
+  $("#fuMemoText").value = item.memo || "";
+  $("#fuMemoStatus").textContent = "";
+  $("#fuMemoStatus").classList.add("hidden");
+  $("#fuMemoDialog").showModal();
+  setTimeout(() => $("#fuMemoText").focus(), 0);
+}
+
+async function saveFuMemo(){
+  if(!fuMemoTarget) throw new Error("F/U 항목을 찾을 수 없습니다.");
+  const updated = await api(`/api/follow-ups/${fuMemoTarget.id}/memo`, {
+    method:"PATCH",
+    body:JSON.stringify({memo:$("#fuMemoText").value})
+  });
+  fuMemoTarget.memo = updated.memo || "";
+  const cached = calendarItems.find(x => Number(x.id) === Number(fuMemoTarget.id));
+  if(cached) cached.memo = updated.memo || "";
+  return updated;
+}
+
 function renderCalendarFollowUpList(items, selectedDate=null){
   const list = $("#calendarFollowUpList");
   list.innerHTML = "";
@@ -1169,10 +1240,10 @@ function renderCalendarFollowUpList(items, selectedDate=null){
       <span class="calendar-fu-main ${item.status === "completed" ? "completed" : ""}">
         <strong>${item.status === "completed" ? "✓ " : ""}${escapeHtml(item.task)}</strong>
         <small>${escapeHtml(item.owner || "담당자 미정")} · ${escapeHtml(formatFuPeriod(item))}</small>
-        <em>${item.status === "completed" ? "완료" : "진행중"} · ${escapeHtml(item.meeting_title || "")}</em>
+        <em>${item.status === "completed" ? "완료" : "진행중"} · ${item.memo ? "메모 있음 · " : ""}${escapeHtml(item.meeting_title || "")}</em>
       </span>`;
-    card.onclick = async () => {
-      await openMeeting(item.meeting_id, "ko");
+    card.onclick = () => {
+      openFuMemoDialog(item);
     };
     list.appendChild(card);
   });
@@ -1426,6 +1497,34 @@ $("#editForm").addEventListener("submit",async(e)=>{
   })});
   editDirty=false; $("#editAutoSaveStatus").textContent=`저장 완료 · ${new Date().toLocaleTimeString()}`; editDialog.close(); await loadFolders(); await loadCalendar(); await openMeeting(m.id,"ko");
 });
+
+$("#closeFuMemo").onclick = () => $("#fuMemoDialog").close();
+$("#cancelFuMemo").onclick = () => $("#fuMemoDialog").close();
+
+$("#fuMemoForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const status = $("#fuMemoStatus");
+  status.classList.remove("hidden");
+  status.className = "save-status saving";
+  status.textContent = "메모 저장 중...";
+  try {
+    await saveFuMemo();
+    status.className = "save-status success";
+    status.textContent = "메모를 저장했습니다.";
+    await loadCalendar();
+    setTimeout(() => $("#fuMemoDialog").close(), 450);
+  } catch(err) {
+    status.className = "save-status error";
+    status.textContent = "메모 저장 실패: " + err.message;
+  }
+});
+
+$("#goFuMeeting").onclick = async () => {
+  if(!fuMemoTarget) return;
+  const meetingId = fuMemoTarget.meeting_id;
+  $("#fuMemoDialog").close();
+  await openMeeting(meetingId, "ko");
+};
 
 $("#calendarPrev").onclick = async () => {
   calendarCursor = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth()-1, 1);
