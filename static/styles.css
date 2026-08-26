@@ -763,3 +763,44 @@ label input,label textarea,label select{margin-top:7px;font-weight:400}
     border-top:1px solid #edf0f4;
   }
 }
+
+.follow-up-editor-row{
+  grid-template-columns:minmax(180px,2fr) minmax(90px,1fr) 118px 118px 90px 118px minmax(150px,1.5fr) 30px;
+}
+.follow-up-editor-row.completed{background:#f3f8f4;border-color:#cfe0d2}
+.follow-up-editor-row select{width:100%;margin-top:4px}
+.follow-up-card.completed{border-color:#cfe0d2;background:#fbfdfb}
+.fu-status-badge{display:inline-block;margin-right:7px;padding:2px 7px;border-radius:999px;font-size:10px}
+.fu-status-badge.open{background:#eef4fb;color:#41698f}
+.fu-status-badge.completed{background:#e8f3ea;color:#487454}
+.follow-up-meta{grid-template-columns:1fr 1.4fr 1fr}
+.follow-up-completion{display:grid;grid-template-columns:75px minmax(0,1fr);border-top:1px solid #e8efe9;background:#f5faf6}
+.follow-up-completion b{padding:10px 12px;color:#6e8071;font-size:10px}
+.follow-up-completion div{padding:10px 12px;color:#435449;font-size:11px;white-space:pre-wrap}
+.calendar-fu-main.completed strong{color:#6f7f72;text-decoration:line-through}
+
+.folder-inline-meetings{
+  margin:2px 4px 8px 42px;
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+.inline-meeting-card{
+  min-height:auto!important;
+  padding:7px 8px!important;
+  border-radius:8px!important;
+  background:#f8fafc!important;
+  border-color:#e3e9ef!important;
+}
+.inline-meeting-card strong{font-size:10px!important}
+.inline-meeting-card span,.inline-meeting-card small{font-size:8px!important}
+.inline-meeting-card.active{background:#edf4fb!important;border-color:#c8dced!important}
+.inline-meeting-empty{padding:6px 8px;color:#98a3b1;font-size:9px}
+
+.user-folder-row,.tree-folder-btn{cursor:grab!important}
+.user-folder-row:active,.tree-folder-btn:active{cursor:grabbing!important}
+
+@media(max-width:1100px){
+  .follow-up-editor-row{grid-template-columns:1fr 1fr}
+  .fu-task-field,.fu-completion-field{grid-column:1 / -1}
+}

@@ -267,6 +267,9 @@ def init_db():
                 owner TEXT,
                 start_date TEXT,
                 end_date TEXT,
+                status TEXT NOT NULL DEFAULT 'open',
+                completion_note TEXT,
+                completed_date TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
@@ -308,6 +311,9 @@ def init_db():
             "ALTER TABLE drafts ADD COLUMN IF NOT EXISTS purpose TEXT",
             "ALTER TABLE drafts ADD COLUMN IF NOT EXISTS follow_up TEXT",
             "ALTER TABLE drafts ADD COLUMN IF NOT EXISTS follow_up_items_json TEXT",
+            "ALTER TABLE follow_up_items ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open'",
+            "ALTER TABLE follow_up_items ADD COLUMN IF NOT EXISTS completion_note TEXT",
+            "ALTER TABLE follow_up_items ADD COLUMN IF NOT EXISTS completed_date TEXT",
             "ALTER TABLE folders ADD COLUMN IF NOT EXISTS parent_id BIGINT",
             "ALTER TABLE folders ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT '#4F6B8A'",
         ]
@@ -389,6 +395,9 @@ def init_db():
                 owner TEXT,
                 start_date TEXT,
                 end_date TEXT,
+                status TEXT NOT NULL DEFAULT 'open',
+                completion_note TEXT,
+                completed_date TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
@@ -445,6 +454,14 @@ def init_db():
             conn.execute("ALTER TABLE drafts ADD COLUMN follow_up TEXT")
         if "follow_up_items_json" not in draft_columns:
             conn.execute("ALTER TABLE drafts ADD COLUMN follow_up_items_json TEXT")
+
+        fu_columns = {r[1] for r in conn.execute("PRAGMA table_info(follow_up_items)").fetchall()}
+        if "status" not in fu_columns:
+            conn.execute("ALTER TABLE follow_up_items ADD COLUMN status TEXT NOT NULL DEFAULT 'open'")
+        if "completion_note" not in fu_columns:
+            conn.execute("ALTER TABLE follow_up_items ADD COLUMN completion_note TEXT")
+        if "completed_date" not in fu_columns:
+            conn.execute("ALTER TABLE follow_up_items ADD COLUMN completed_date TEXT")
 
         folder_columns = {r[1] for r in conn.execute("PRAGMA table_info(folders)").fetchall()}
         if "parent_id" not in folder_columns:
@@ -521,6 +538,9 @@ class FollowUpItemIn(BaseModel):
     owner: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    status: str = "open"
+    completion_note: Optional[str] = None
+    completed_date: Optional[str] = None
 
 
 class DraftIn(BaseModel):
@@ -595,17 +615,33 @@ def normalize_follow_up_items(items):
         owner = (item.owner or "").strip() or None
         start_date = validate_follow_up_date(item.start_date, "F/U 시작일")
         end_date = validate_follow_up_date(item.end_date, "F/U 종료일")
-        if not task and not owner and not start_date and not end_date:
+        status = (item.status or "open").strip().lower()
+        if status not in {"open", "completed"}:
+            raise HTTPException(status_code=400, detail="F/U 상태는 open 또는 completed만 가능합니다.")
+        completion_note = (item.completion_note or "").strip() or None
+        completed_date = validate_follow_up_date(item.completed_date, "F/U 완료일")
+
+        if not task and not owner and not start_date and not end_date and not completion_note:
             continue
         if not task:
             raise HTTPException(status_code=400, detail="F/U 업무내용을 입력해 주세요.")
         if start_date and end_date and end_date < start_date:
             raise HTTPException(status_code=400, detail="F/U 종료일은 시작일보다 빠를 수 없습니다.")
+
+        if status == "completed" and not completed_date:
+            completed_date = end_date or start_date
+        if status == "open":
+            completed_date = None
+            completion_note = None
+
         normalized.append({
             "task": task,
             "owner": owner,
             "start_date": start_date,
             "end_date": end_date,
+            "status": status,
+            "completion_note": completion_note,
+            "completed_date": completed_date,
         })
     return normalized
 
@@ -620,8 +656,12 @@ def follow_up_items_to_text(items):
             period = item["start_date"]
         elif item.get("end_date"):
             period = f"~ {item['end_date']}"
-        meta = " / ".join(x for x in [item.get("owner"), period] if x)
-        lines.append(f"- {item['task']}" + (f" ({meta})" if meta else ""))
+        state = "완료" if item.get("status") == "completed" else "진행"
+        meta = " / ".join(x for x in [item.get("owner"), period, state] if x)
+        line = f"- {item['task']}" + (f" ({meta})" if meta else "")
+        if item.get("completion_note"):
+            line += f"\n  완료사항: {item['completion_note']}"
+        lines.append(line)
     return "\n".join(lines) or None
 
 
@@ -633,8 +673,10 @@ def replace_follow_up_items(conn, meeting_id: int, items):
         conn.execute(
             """
             INSERT INTO follow_up_items(
-                meeting_id, task, owner, start_date, end_date, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                meeting_id, task, owner, start_date, end_date,
+                status, completion_note, completed_date,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 meeting_id,
@@ -642,6 +684,9 @@ def replace_follow_up_items(conn, meeting_id: int, items):
                 item["owner"],
                 item["start_date"],
                 item["end_date"],
+                item["status"],
+                item["completion_note"],
+                item["completed_date"],
                 now,
                 now,
             ),
@@ -653,7 +698,8 @@ def get_follow_up_items(meeting_id: int):
     conn = db()
     rows = conn.execute(
         """
-        SELECT id, meeting_id, task, owner, start_date, end_date, created_at, updated_at
+        SELECT id, meeting_id, task, owner, start_date, end_date,
+               status, completion_note, completed_date, created_at, updated_at
         FROM follow_up_items
         WHERE meeting_id=?
         ORDER BY
@@ -1548,6 +1594,7 @@ def follow_up_calendar(month: str, user=Depends(require_user)):
         """
         SELECT
             fu.id, fu.meeting_id, fu.task, fu.owner, fu.start_date, fu.end_date,
+            fu.status, fu.completion_note, fu.completed_date,
             m.title AS meeting_title,
             m.folder_id,
             f.name AS folder_name,

@@ -457,6 +457,15 @@ function renderFolders(data){
     folderListEl.appendChild(row);
   }
 
+  function beginFolderDrag(e, row, folder){
+    closeFolderContextMenu();
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("application/x-folder-id", String(folder.id));
+    e.dataTransfer.setData("text/plain", `folder:${folder.id}`);
+    row.classList.add("folder-dragging");
+    document.body.classList.add("folder-drag-active");
+  }
+
   function addFolderRow(f, depth){
     const row = document.createElement("div");
     row.className = "folder-row user-folder-row" + (String(currentFolder) === String(f.id) ? " active" : "");
@@ -465,16 +474,11 @@ function renderFolders(data){
     row.title = "드래그하여 폴더 이동 · 오른쪽 클릭하여 이름/색상 변경";
 
     row.addEventListener("dragstart", e => {
-      if(e.target.closest("button")){
+      if(e.target.closest(".folder-toggle-btn, .folder-child-btn")){
         e.preventDefault();
         return;
       }
-      closeFolderContextMenu();
-      e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData("application/x-folder-id", String(f.id));
-      e.dataTransfer.setData("text/plain", `folder:${f.id}`);
-      row.classList.add("folder-dragging");
-      document.body.classList.add("folder-drag-active");
+      beginFolderDrag(e, row, f);
     });
     row.addEventListener("dragend", () => {
       row.classList.remove("folder-dragging");
@@ -540,6 +544,15 @@ function renderFolders(data){
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "folder-filter-btn tree-folder-btn";
+    btn.draggable = true;
+    btn.addEventListener("dragstart", e => {
+      e.stopPropagation();
+      beginFolderDrag(e, row, f);
+    });
+    btn.addEventListener("dragend", () => {
+      row.classList.remove("folder-dragging");
+      document.body.classList.remove("folder-drag-active");
+    });
     btn.innerHTML = `<span class="folder-color-dot" style="background:${escapeHtml(f.color || "#536878")}"></span><span class="folder-label">${escapeHtml(f.name)}</span><span class="folder-count">${Number(f.meeting_count || 0)}</span>`;
     btn.onclick = async () => {
       currentFolder = String(f.id);
@@ -565,6 +578,12 @@ function renderFolders(data){
     row.appendChild(child);
 
     folderListEl.appendChild(row);
+    if(String(currentFolder) === String(f.id)){
+      const inlineMeetings = document.createElement("div");
+      inlineMeetings.className = "folder-inline-meetings";
+      inlineMeetings.dataset.folderId = String(f.id);
+      folderListEl.appendChild(inlineMeetings);
+    }
     if(!collapsedFolderIds.has(String(f.id))) childRows.forEach(c => addFolderRow(c, depth + 1));
   }
 
@@ -879,9 +898,32 @@ async function moveMeetingToFolder(meetingId, folderId, folderLabel=null){
 
 async function loadMeetings(q=""){
   const rows = await api("/api/meetings?q=" + encodeURIComponent(q) + "&folder=" + encodeURIComponent(currentFolder));
-  listEl.innerHTML = "";
+
+  const specificFolder = currentFolder !== "all" && currentFolder !== "uncategorized";
+  let target = listEl;
+
+  if(specificFolder){
+    let inline = document.querySelector(`.folder-inline-meetings[data-folder-id="${CSS.escape(String(currentFolder))}"]`);
+    if(!inline){
+      // Rebuild the tree once so the selected folder gets its inline meeting slot.
+      await loadFolders();
+      inline = document.querySelector(`.folder-inline-meetings[data-folder-id="${CSS.escape(String(currentFolder))}"]`);
+    }
+    if(inline){
+      listEl.innerHTML = "";
+      listEl.classList.add("hidden");
+      target = inline;
+    } else {
+      listEl.classList.remove("hidden");
+    }
+  } else {
+    listEl.classList.remove("hidden");
+  }
+
+  target.innerHTML = "";
   rows.forEach(m => {
-    const btn=document.createElement("button"); btn.className="meeting-card";
+    const btn=document.createElement("button");
+    btn.className=specificFolder ? "meeting-card inline-meeting-card" : "meeting-card";
     btn.draggable = true;
     btn.dataset.meetingId = String(m.id);
     btn.addEventListener("dragstart", (e) => {
@@ -892,12 +934,20 @@ async function loadMeetings(q=""){
     btn.addEventListener("dragend", () => btn.classList.remove("dragging"));
     if(m.id===currentMeetingId) btn.classList.add("active");
     const badges=["ko",...(m.translations||[])].map(x=>`<span class="mini-lang">${x.toUpperCase()}</span>`).join("");
-    btn.innerHTML=`<strong>${escapeHtml(m.title)}</strong><span>${escapeHtml(fmtDate(m.recorded_at||m.created_at))}</span><small>${m.folder_name ? `<span class="folder-color-dot mini" style="background:${escapeHtml(m.folder_color||"#536878")}"></span>` + escapeHtml(m.folder_name) + " · " : ""}${m.author ? "작성자 " + escapeHtml(m.author) + " · " : ""}${escapeHtml(m.source||"")} ${badges}</small>`;
-    btn.onclick=()=>openMeeting(m.id,"ko"); listEl.appendChild(btn);
+    btn.innerHTML=`<strong>${escapeHtml(m.title)}</strong><span>${escapeHtml(fmtDate(m.recorded_at||m.created_at))}</span><small>${m.author ? "작성자 " + escapeHtml(m.author) + " · " : ""}${escapeHtml(m.source||"")} ${badges}</small>`;
+    btn.onclick=()=>openMeeting(m.id,"ko");
+    target.appendChild(btn);
   });
+
+  if(specificFolder && !rows.length){
+    const empty = document.createElement("div");
+    empty.className = "inline-meeting-empty";
+    empty.textContent = "회의록 없음";
+    target.appendChild(empty);
+  }
+
   emptyEl.classList.toggle("hidden", rows.length !== 0 || !!currentMeetingId);
 }
-
 async function openMeeting(id, lang="ko"){
   const m=await api(`/api/meetings/${id}?lang=${lang}`);
   currentMeetingId=id; currentLanguage=lang; currentMeeting=m; renderMeeting(m);
@@ -922,30 +972,47 @@ function createFollowUpEditorRow(containerId, data={}, mode="import"){
   const container = document.getElementById(containerId);
   const row = document.createElement("div");
   row.className = "follow-up-editor-row";
+  const completed = (data.status || "open") === "completed";
   row.innerHTML = `
     <label class="fu-task-field">업무내용<input class="fu-task" value="${escapeHtml(data.task||"")}" placeholder="예: HD 설비 FAT 일정 확정"/></label>
     <label>담당자<input class="fu-owner" value="${escapeHtml(data.owner||"")}" placeholder="예: 홍길동"/></label>
     <label>시작일<input class="fu-start" type="date" value="${escapeHtml(data.start_date||"")}"/></label>
     <label>종료일<input class="fu-end" type="date" value="${escapeHtml(data.end_date||"")}"/></label>
+    <label>상태<select class="fu-status"><option value="open"${completed ? "" : " selected"}>진행중</option><option value="completed"${completed ? " selected" : ""}>완료</option></select></label>
+    <label>완료일<input class="fu-completed-date" type="date" value="${escapeHtml(data.completed_date||"")}"/></label>
+    <label class="fu-completion-field">완료사항<input class="fu-completion-note" value="${escapeHtml(data.completion_note||"")}" placeholder="예: FAT 완료, 출하 승인"/></label>
     <button class="fu-remove" type="button" title="F/U 삭제">×</button>`;
+
+  const statusEl = row.querySelector(".fu-status");
+  const completedDateEl = row.querySelector(".fu-completed-date");
+  const completionNoteEl = row.querySelector(".fu-completion-note");
+  const syncCompletionState = () => {
+    const done = statusEl.value === "completed";
+    completedDateEl.disabled = !done;
+    completionNoteEl.disabled = !done;
+    row.classList.toggle("completed", done);
+    if(!done) completedDateEl.value = "";
+  };
+  syncCompletionState();
+
   row.querySelector(".fu-remove").onclick = () => {
     row.remove();
     if(mode === "import") scheduleImportDraft();
     else editDirty = true;
   };
-  row.querySelectorAll("input").forEach(el => {
+  row.querySelectorAll("input, select").forEach(el => {
     el.addEventListener("input", () => {
       if(mode === "import") scheduleImportDraft();
       else editDirty = true;
     });
     el.addEventListener("change", () => {
+      if(el.classList.contains("fu-status")) syncCompletionState();
       if(mode === "import") scheduleImportDraft();
       else editDirty = true;
     });
   });
   container.appendChild(row);
 }
-
 function setFollowUpEditor(containerId, items, mode="import"){
   const container = document.getElementById(containerId);
   container.innerHTML = "";
@@ -963,9 +1030,11 @@ function collectFollowUpItems(containerId){
     owner: row.querySelector(".fu-owner").value.trim() || null,
     start_date: row.querySelector(".fu-start").value || null,
     end_date: row.querySelector(".fu-end").value || null,
-  })).filter(item => item.task || item.owner || item.start_date || item.end_date);
+    status: row.querySelector(".fu-status").value || "open",
+    completed_date: row.querySelector(".fu-completed-date").value || null,
+    completion_note: row.querySelector(".fu-completion-note").value.trim() || null,
+  })).filter(item => item.task || item.owner || item.start_date || item.end_date || item.completion_note);
 }
-
 function renderFollowUpItems(meeting){
   const container = $("#followUp");
   const legacy = $("#legacyFollowUp");
@@ -975,14 +1044,17 @@ function renderFollowUpItems(meeting){
   if(items.length){
     legacy.classList.add("hidden");
     items.forEach(item => {
+      const done = item.status === "completed";
       const card = document.createElement("div");
-      card.className = "follow-up-card";
+      card.className = "follow-up-card" + (done ? " completed" : "");
       card.innerHTML = `
-        <div class="follow-up-task">${escapeHtml(item.task)}</div>
+        <div class="follow-up-task"><span class="fu-status-badge ${done ? "completed" : "open"}">${done ? "완료" : "진행중"}</span>${escapeHtml(item.task)}</div>
         <div class="follow-up-meta">
           <span><b>담당자</b>${escapeHtml(item.owner || "-")}</span>
           <span><b>기간</b>${escapeHtml(formatFuPeriod(item))}</span>
-        </div>`;
+          <span><b>완료일</b>${escapeHtml(item.completed_date ? formatFuDate(item.completed_date) : "-")}</span>
+        </div>
+        ${done ? `<div class="follow-up-completion"><b>완료사항</b><div>${escapeHtml(item.completion_note || "완료")}</div></div>` : ""}`;
       container.appendChild(card);
     });
   } else if(meeting.follow_up){
@@ -993,7 +1065,6 @@ function renderFollowUpItems(meeting){
     legacy.classList.remove("hidden");
   }
 }
-
 function ymd(date){
   const y = date.getFullYear();
   const m = String(date.getMonth()+1).padStart(2,"0");
@@ -1095,10 +1166,10 @@ function renderCalendarFollowUpList(items, selectedDate=null){
     card.className = "calendar-fu-card";
     card.innerHTML = `
       <span class="calendar-fu-color" style="background:${escapeHtml(item.folder_color || "#64748B")}"></span>
-      <span class="calendar-fu-main">
-        <strong>${escapeHtml(item.task)}</strong>
+      <span class="calendar-fu-main ${item.status === "completed" ? "completed" : ""}">
+        <strong>${item.status === "completed" ? "✓ " : ""}${escapeHtml(item.task)}</strong>
         <small>${escapeHtml(item.owner || "담당자 미정")} · ${escapeHtml(formatFuPeriod(item))}</small>
-        <em>${escapeHtml(item.meeting_title || "")}</em>
+        <em>${item.status === "completed" ? "완료" : "진행중"} · ${escapeHtml(item.meeting_title || "")}</em>
       </span>`;
     card.onclick = async () => {
       await openMeeting(item.meeting_id, "ko");
