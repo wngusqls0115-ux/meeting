@@ -4,12 +4,13 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>회의록</title>
-  <link rel="stylesheet" href="/styles.css?v=20260826-folder-toggle-fu-memo-v7"/>
+  <link rel="stylesheet" href="/styles.css?v=20260826-ui-fu-search-v8"/>
 </head>
 <body>
   <div id="appErrorBanner" class="app-error-banner hidden"></div>
-  <div class="app">
+  <div class="app" id="appRoot">
     <aside class="sidebar">
+      <button id="sidebarToggle" class="sidebar-toggle" type="button" title="왼쪽 창 접기" aria-label="왼쪽 창 접기">‹</button>
       <div class="brand"><div class="brand-mark">M</div><div><strong>회의록</strong><span>PLAUD 연동</span></div></div>
       <div class="account-box">
         <div><strong id="userName">사용자</strong><span id="userEmail"></span></div>
@@ -19,8 +20,7 @@
           <button id="logoutBtn" class="text-btn">로그아웃</button>
         </div>
       </div>
-      <div id="storageStatus" class="storage-status">저장소 확인 중...</div>
-      <button id="newBtn" class="primary">+ 회의 내용 붙여넣기</button>
+<button id="newBtn" class="primary">+ 회의 추가</button>
 
       <section class="folder-section">
         <div class="folder-head">
@@ -30,7 +30,7 @@
 
         <div id="folderInlineError" class="folder-inline-error hidden"></div>
         <div id="folderRootDropZone" class="folder-root-drop-zone">여기로 폴더를 끌면 최상위로 이동</div>
-        <div class="folder-help">회의록과 폴더 모두 마우스로 끌어 이동할 수 있습니다. 폴더명 클릭은 회의록 펼침/접힘, ▸/▾는 하위 폴더 접기·펼치기입니다. 이름·색상 변경은 오른쪽 클릭하세요.</div>
+        <div class="folder-help">회의록과 폴더 모두 이동할 수 있습니다. 폴더명은 왼쪽 마우스로 누른 채 끌어 다른 폴더에 놓으세요. 클릭만 하면 회의록을 펼치거나 접습니다.</div>
         <div id="folderList" class="folder-list"></div>
       </section>
 
@@ -43,13 +43,14 @@
             <button id="calendarNext" type="button" aria-label="다음 달">›</button>
           </div>
         </div>
+        <input id="fuSearch" class="fu-search" placeholder="F/U 검색 · 업무 / 담당자 / 메모 / 회의명"/>
         <div id="calendarMonthLabel" class="calendar-month-label"></div>
         <div class="calendar-weekdays">
           <span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span>
         </div>
         <div id="calendarGrid" class="calendar-grid"></div>
         <div class="calendar-followup-head">
-          <strong>이번 달 F/U</strong>
+          <strong id="calendarFollowUpTitle">이번 달 F/U</strong>
           <span id="calendarFollowUpCount">0</span>
         </div>
         <div id="calendarFollowUpList" class="calendar-followup-list"></div>
@@ -59,7 +60,7 @@
       <div id="meetingList" class="meeting-list"></div>
     </aside>
     <main class="main">
-      <div id="empty" class="empty hidden"><h1>회의 기록을 한 곳에서</h1><p>PLAUD 전사본을 가져와 저장하고, 번역하고, 검색하고, 로그인 사용자끼리 공유할 수 있습니다.</p><button id="emptyNewBtn" class="primary">첫 회의 가져오기</button></div>
+      <div id="empty" class="empty hidden"><h1>회의 기록을 한 곳에서</h1><p>PLAUD 전사본을 가져와 저장하고, 번역하고, 검색하고, 로그인 사용자끼리 공유할 수 있습니다.</p><button id="emptyNewBtn" class="primary">첫 회의 추가</button></div>
       <article id="detail" class="detail hidden">
         <header class="detail-head">
           <div class="detail-title-block">
@@ -117,7 +118,7 @@
   </div>
 
   <dialog id="importDialog"><form id="importForm" method="dialog">
-    <div class="dialog-head"><h2>회의 가져오기</h2><button type="button" class="icon" id="closeImport">×</button></div>
+    <div class="dialog-head"><h2>회의 추가</h2><button type="button" class="icon" id="closeImport">×</button></div>
     <p class="dialog-note">PLAUD에서 생성한 회의 내용을 복사해 붙여넣습니다. 미저장 내용은 브라우저에 수시 임시저장되고, 창을 열어둔 경우 20분마다 PostgreSQL 초안으로 자동 저장됩니다.</p>
     <div id="draftStatus" class="draft-status hidden"></div>
     <div class="form-section-title">회의개요</div>
@@ -265,8 +266,8 @@
   </div></dialog>
 
 
-  <script src="/config.js?v=20260826-folder-toggle-fu-memo-v7"></script>
-  <script src="/app.js?v=20260826-folder-toggle-fu-memo-v7"></script>
+  <script src="/config.js?v=20260826-ui-fu-search-v8"></script>
+  <script src="/app.js?v=20260826-ui-fu-search-v8"></script>
   <script>
     setTimeout(() => {
       if (!window.MEETING_APP_LOADED) {

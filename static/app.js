@@ -31,6 +31,8 @@ let calendarItems = [];
 let expandedMeetingFolderId = null;
 let folderDragInProgress = false;
 let fuMemoTarget = null;
+let fuSearchTimer = null;
+let folderPointerState = null;
 let folderCreateParentId = null;
 let folderCreateColor = "#536878";
 let folderColorTarget = null;
@@ -64,6 +66,8 @@ const FOLDER_COLORS = [
   {hex:"#5F777A", name:"틸 그레이"},
   {hex:"#867A59", name:"오커"}
 ];
+
+const FU_COLORS = FOLDER_COLORS;
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -262,24 +266,6 @@ function clearImportDraft(){
   }
 }
 
-async function loadStorageStatus(){
-  const el = $("#storageStatus");
-  if(!el) return;
-  try {
-    const s = await api("/api/storage/status");
-    if(s.persistent){
-      el.textContent = `DB: PostgreSQL · 저장 ${s.meeting_count}건`;
-      el.className = "storage-status persistent";
-    } else {
-      el.textContent = `DB: SQLite 임시저장 · ${s.meeting_count}건`;
-      el.className = "storage-status ephemeral";
-    }
-  } catch(err) {
-    el.textContent = "DB 상태 확인 실패";
-    el.className = "storage-status error";
-  }
-}
-
 
 function loginUrl(){ return "/login.html?next=" + encodeURIComponent(location.pathname + location.search + location.hash); }
 
@@ -333,6 +319,26 @@ function fmtDate(v){ if(!v) return ""; try { return new Date(v).toLocaleString("
 function toLocalInput(v){ if(!v) return ""; const d=new Date(v); if(Number.isNaN(d.getTime())) return ""; const local=new Date(d.getTime()-d.getTimezoneOffset()*60000); return local.toISOString().slice(0,16); }
 function escapeHtml(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c])); }
 
+
+const SIDEBAR_COLLAPSED_KEY = "meeting_sidebar_collapsed_v1";
+
+function setSidebarCollapsed(collapsed){
+  const appRoot = $("#appRoot");
+  const sidebar = document.querySelector(".sidebar");
+  const btn = $("#sidebarToggle");
+  appRoot.classList.toggle("sidebar-collapsed", collapsed);
+  sidebar.classList.toggle("collapsed", collapsed);
+  btn.textContent = collapsed ? "›" : "‹";
+  btn.title = collapsed ? "왼쪽 창 펼치기" : "왼쪽 창 접기";
+  btn.setAttribute("aria-label", btn.title);
+  try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0"); } catch {}
+}
+
+function restoreSidebarState(){
+  let collapsed = false;
+  try { collapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"; } catch {}
+  setSidebarCollapsed(collapsed);
+}
 
 function showToast(message, type="info"){
   let toast = document.querySelector("#appToast");
@@ -416,6 +422,118 @@ function openFolderContextMenu(folder, clientX, clientY){
   menu.style.top = `${y}px`;
 }
 
+function clearFolderPointerHighlights(){
+  $$(".user-folder-row.pointer-drop-target").forEach(el => el.classList.remove("pointer-drop-target"));
+  $("#folderRootDropZone")?.classList.remove("drag-over");
+}
+
+function setupFolderPointerDrag(handle, row, folder){
+  let local = null;
+
+  const cleanup = () => {
+    if(local?.ghost) local.ghost.remove();
+    row.classList.remove("folder-dragging");
+    document.body.classList.remove("folder-drag-active");
+    clearFolderPointerHighlights();
+  };
+
+  handle.addEventListener("pointerdown", e => {
+    if(e.button !== 0) return;
+    local = {
+      pointerId:e.pointerId,
+      startX:e.clientX,
+      startY:e.clientY,
+      dragging:false,
+      targetFolderId:null,
+      toRoot:false,
+      ghost:null
+    };
+    try { handle.setPointerCapture(e.pointerId); } catch {}
+  });
+
+  handle.addEventListener("pointermove", e => {
+    if(!local || e.pointerId !== local.pointerId) return;
+    const distance = Math.hypot(e.clientX-local.startX, e.clientY-local.startY);
+
+    if(!local.dragging && distance >= 6){
+      local.dragging = true;
+      folderDragInProgress = true;
+      closeFolderContextMenu();
+      row.classList.add("folder-dragging");
+      document.body.classList.add("folder-drag-active");
+
+      const ghost = document.createElement("div");
+      ghost.className = "folder-pointer-ghost";
+      ghost.textContent = folder.name;
+      document.body.appendChild(ghost);
+      local.ghost = ghost;
+    }
+
+    if(!local.dragging) return;
+    e.preventDefault();
+
+    if(local.ghost){
+      local.ghost.style.left = `${e.clientX + 12}px`;
+      local.ghost.style.top = `${e.clientY + 12}px`;
+    }
+
+    clearFolderPointerHighlights();
+    local.targetFolderId = null;
+    local.toRoot = false;
+
+    const root = $("#folderRootDropZone");
+    if(root){
+      const rect = root.getBoundingClientRect();
+      if(e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom){
+        root.classList.add("drag-over");
+        local.toRoot = true;
+        return;
+      }
+    }
+
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    const targetRow = under?.closest?.(".user-folder-row");
+    if(targetRow){
+      const targetId = Number(targetRow.dataset.folderValue);
+      if(targetId && targetId !== Number(folder.id)){
+        targetRow.classList.add("pointer-drop-target");
+        local.targetFolderId = targetId;
+      }
+    }
+  });
+
+  const finish = async (e, cancelled=false) => {
+    if(!local || e.pointerId !== local.pointerId) return;
+    const snapshot = local;
+    local = null;
+    cleanup();
+
+    try { handle.releasePointerCapture(e.pointerId); } catch {}
+
+    if(!snapshot.dragging) return;
+
+    // Delay reset so the synthetic click after pointerup cannot open the folder.
+    setTimeout(() => { folderDragInProgress = false; }, 140);
+
+    if(cancelled) return;
+
+    try {
+      if(snapshot.toRoot){
+        await moveFolderToParent(folder.id, null);
+      } else if(snapshot.targetFolderId){
+        await moveFolderToParent(folder.id, snapshot.targetFolderId);
+      } else {
+        showToast("이동할 폴더 위에 놓아 주세요.", "info");
+      }
+    } catch(err) {
+      showToast("폴더 이동 실패: " + err.message, "error");
+    }
+  };
+
+  handle.addEventListener("pointerup", e => { finish(e, false); });
+  handle.addEventListener("pointercancel", e => { finish(e, true); });
+}
+
 function renderFolders(data){
   folderListEl.innerHTML = "";
   const folders = data.folders || [];
@@ -461,35 +579,13 @@ function renderFolders(data){
     folderListEl.appendChild(row);
   }
 
-  function beginFolderDrag(e, row, folder){
-    folderDragInProgress = true;
-    closeFolderContextMenu();
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("application/x-folder-id", String(folder.id));
-    e.dataTransfer.setData("text/plain", `folder:${folder.id}`);
-    row.classList.add("folder-dragging");
-    document.body.classList.add("folder-drag-active");
-  }
-
   function addFolderRow(f, depth){
     const row = document.createElement("div");
     row.className = "folder-row user-folder-row" + (String(currentFolder) === String(f.id) ? " active" : "");
     row.dataset.folderValue = String(f.id);
-    row.draggable = true;
+    row.draggable = false;
     row.title = "드래그하여 폴더 이동 · 오른쪽 클릭하여 이름/색상 변경";
 
-    row.addEventListener("dragstart", e => {
-      if(e.target.closest(".folder-toggle-btn, .folder-child-btn")){
-        e.preventDefault();
-        return;
-      }
-      beginFolderDrag(e, row, f);
-    });
-    row.addEventListener("dragend", () => {
-      row.classList.remove("folder-dragging");
-      document.body.classList.remove("folder-drag-active");
-      setTimeout(() => { folderDragInProgress = false; }, 80);
-    });
     row.addEventListener("dragover", e => {
       if(e.dataTransfer.types.includes("application/x-folder-id") || e.dataTransfer.types.includes("text/meeting-id")){
         e.preventDefault();
@@ -550,16 +646,8 @@ function renderFolders(data){
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "folder-filter-btn tree-folder-btn";
-    btn.draggable = true;
-    btn.addEventListener("dragstart", e => {
-      e.stopPropagation();
-      beginFolderDrag(e, row, f);
-    });
-    btn.addEventListener("dragend", () => {
-      row.classList.remove("folder-dragging");
-      document.body.classList.remove("folder-drag-active");
-      setTimeout(() => { folderDragInProgress = false; }, 80);
-    });
+    btn.draggable = false;
+    setupFolderPointerDrag(btn, row, f);
     btn.innerHTML = `<span class="folder-color-dot" style="background:${escapeHtml(f.color || "#536878")}"></span><span class="folder-label">${escapeHtml(f.name)}</span><span class="folder-count">${Number(f.meeting_count || 0)}</span>`;
     btn.onclick = async () => {
       if(folderDragInProgress) return;
@@ -1014,12 +1102,18 @@ function createFollowUpEditorRow(containerId, data={}, mode="import"){
   const row = document.createElement("div");
   row.className = "follow-up-editor-row";
   const completed = (data.status || "open") === "completed";
+  const selectedColor = String(data.color || "#64748B").toUpperCase();
+  const colorOptions = FU_COLORS.map(c =>
+    `<option value="${c.hex}"${c.hex === selectedColor ? " selected" : ""}>${escapeHtml(c.name)}</option>`
+  ).join("");
+
   row.innerHTML = `
     <label class="fu-task-field">업무내용<input class="fu-task" value="${escapeHtml(data.task||"")}" placeholder="예: HD 설비 FAT 일정 확정"/></label>
     <label>담당자<input class="fu-owner" value="${escapeHtml(data.owner||"")}" placeholder="예: 홍길동"/></label>
     <label>시작일<input class="fu-start" type="date" value="${escapeHtml(data.start_date||"")}"/></label>
     <label>종료일<input class="fu-end" type="date" value="${escapeHtml(data.end_date||"")}"/></label>
     <label>상태<select class="fu-status"><option value="open"${completed ? "" : " selected"}>진행중</option><option value="completed"${completed ? " selected" : ""}>완료</option></select></label>
+    <label>색상<select class="fu-color">${colorOptions}</select></label>
     <label>완료일<input class="fu-completed-date" type="date" value="${escapeHtml(data.completed_date||"")}"/></label>
     <label class="fu-completion-field">완료사항<input class="fu-completion-note" value="${escapeHtml(data.completion_note||"")}" placeholder="예: FAT 완료, 출하 승인"/></label>
     <input class="fu-memo" type="hidden" value="${escapeHtml(data.memo||"")}"/>
@@ -1028,6 +1122,8 @@ function createFollowUpEditorRow(containerId, data={}, mode="import"){
   const statusEl = row.querySelector(".fu-status");
   const completedDateEl = row.querySelector(".fu-completed-date");
   const completionNoteEl = row.querySelector(".fu-completion-note");
+  const colorEl = row.querySelector(".fu-color");
+
   const syncCompletionState = () => {
     const done = statusEl.value === "completed";
     completedDateEl.disabled = !done;
@@ -1035,13 +1131,18 @@ function createFollowUpEditorRow(containerId, data={}, mode="import"){
     row.classList.toggle("completed", done);
     if(!done) completedDateEl.value = "";
   };
+  const syncColor = () => {
+    row.style.setProperty("--fu-editor-color", colorEl.value || "#64748B");
+  };
   syncCompletionState();
+  syncColor();
 
   row.querySelector(".fu-remove").onclick = () => {
     row.remove();
     if(mode === "import") scheduleImportDraft();
     else editDirty = true;
   };
+
   row.querySelectorAll("input, select").forEach(el => {
     el.addEventListener("input", () => {
       if(mode === "import") scheduleImportDraft();
@@ -1049,6 +1150,7 @@ function createFollowUpEditorRow(containerId, data={}, mode="import"){
     });
     el.addEventListener("change", () => {
       if(el.classList.contains("fu-status")) syncCompletionState();
+      if(el.classList.contains("fu-color")) syncColor();
       if(mode === "import") scheduleImportDraft();
       else editDirty = true;
     });
@@ -1076,6 +1178,7 @@ function collectFollowUpItems(containerId){
     completed_date: row.querySelector(".fu-completed-date").value || null,
     completion_note: row.querySelector(".fu-completion-note").value.trim() || null,
     memo: row.querySelector(".fu-memo").value.trim() || null,
+    color: row.querySelector(".fu-color").value || "#64748B",
   })).filter(item => item.task || item.owner || item.start_date || item.end_date || item.completion_note || item.memo);
 }
 function renderFollowUpItems(meeting){
@@ -1090,6 +1193,7 @@ function renderFollowUpItems(meeting){
       const done = item.status === "completed";
       const card = document.createElement("div");
       card.className = "follow-up-card" + (done ? " completed" : "");
+      card.style.borderLeft = `5px solid ${item.color || "#64748B"}`;
       card.innerHTML = `
         <div class="follow-up-task"><span class="fu-status-badge ${done ? "completed" : "open"}">${done ? "완료" : "진행중"}</span>${escapeHtml(item.task)}</div>
         <div class="follow-up-meta">
@@ -1171,7 +1275,7 @@ function renderCalendar(){
       dots.className = "calendar-day-dots";
       items.slice(0,3).forEach(item => {
         const dot = document.createElement("span");
-        dot.style.background = item.folder_color || "#64748B";
+        dot.style.background = item.color || item.folder_color || "#64748B";
         dots.appendChild(dot);
       });
       if(items.length > 3){
@@ -1186,7 +1290,12 @@ function renderCalendar(){
     grid.appendChild(cell);
   }
 
-  renderCalendarFollowUpList(calendarItems);
+  if(($("#fuSearch")?.value || "").trim()){
+    runFuSearch().catch(err => showToast("F/U 검색 실패: " + err.message, "error"));
+  } else {
+    $("#calendarFollowUpTitle").textContent = "이번 달 F/U";
+    renderCalendarFollowUpList(calendarItems);
+  }
 }
 
 function openFuMemoDialog(item){
@@ -1217,11 +1326,25 @@ async function saveFuMemo(){
   return updated;
 }
 
+async function runFuSearch(){
+  const query = ($("#fuSearch")?.value || "").trim();
+  if(!query){
+    $("#calendarFollowUpTitle").textContent = "이번 달 F/U";
+    renderCalendarFollowUpList(calendarItems);
+    return;
+  }
+
+  $("#calendarFollowUpTitle").textContent = "F/U 검색 결과";
+  const data = await api(`/api/follow-ups/search?q=${encodeURIComponent(query)}`);
+  renderCalendarFollowUpList(data.items || []);
+}
+
 function renderCalendarFollowUpList(items, selectedDate=null){
   const list = $("#calendarFollowUpList");
   list.innerHTML = "";
   if(selectedDate){
-    $("#calendarFollowUpCount").textContent = `${items.length} · ${selectedDate}`;
+    $("#calendarFollowUpTitle").textContent = `${selectedDate} F/U`;
+    $("#calendarFollowUpCount").textContent = String(items.length);
   } else {
     $("#calendarFollowUpCount").textContent = String(items.length);
   }
@@ -1236,7 +1359,7 @@ function renderCalendarFollowUpList(items, selectedDate=null){
     card.type = "button";
     card.className = "calendar-fu-card";
     card.innerHTML = `
-      <span class="calendar-fu-color" style="background:${escapeHtml(item.folder_color || "#64748B")}"></span>
+      <span class="calendar-fu-color" style="background:${escapeHtml(item.color || item.folder_color || "#64748B")}"></span>
       <span class="calendar-fu-main ${item.status === "completed" ? "completed" : ""}">
         <strong>${item.status === "completed" ? "✓ " : ""}${escapeHtml(item.task)}</strong>
         <small>${escapeHtml(item.owner || "담당자 미정")} · ${escapeHtml(formatFuPeriod(item))}</small>
@@ -1424,7 +1547,6 @@ $("#importForm").addEventListener("submit",async(e)=>{
     try {
       await loadFolders();
       await loadMeetings($("#search").value);
-      await loadStorageStatus();
       await loadCalendar();
     } catch(listErr) {
       listRefreshOk = false;
@@ -1525,6 +1647,13 @@ $("#goFuMeeting").onclick = async () => {
   $("#fuMemoDialog").close();
   await openMeeting(meetingId, "ko");
 };
+
+$("#fuSearch").addEventListener("input", () => {
+  clearTimeout(fuSearchTimer);
+  fuSearchTimer = setTimeout(() => {
+    runFuSearch().catch(err => showToast("F/U 검색 실패: " + err.message, "error"));
+  }, 220);
+});
 
 $("#calendarPrev").onclick = async () => {
   calendarCursor = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth()-1, 1);
@@ -1741,6 +1870,11 @@ document.addEventListener("scroll", closeFolderContextMenu, true);
 window.addEventListener("resize", closeFolderContextMenu);
 document.addEventListener("keydown", e => { if(e.key === "Escape") closeFolderContextMenu(); });
 
+$("#sidebarToggle").onclick = () => {
+  const collapsed = $("#appRoot").classList.contains("sidebar-collapsed");
+  setSidebarCollapsed(!collapsed);
+};
+
 $("#showFolderCreateBtn").onclick = () => openFolderCreateForParent(null);
 
 $("#closeFolderCreate").onclick = () => $("#folderCreateDialog").close();
@@ -1764,16 +1898,14 @@ $("#quickFolderSelect").addEventListener("change", async (e) => {
 $("#logoutBtn").onclick=async()=>{ await fetch(apiUrl("/api/auth/logout"),{method:"POST",credentials:"include"}); location.replace("/login.html"); };
 
 (async function boot(){
+  restoreSidebarState();
   if(!(await requireLogin())) return;
   try {
     const h = await fetch(apiUrl("/api/health"), {credentials:"include"});
     if(h.ok){
       const health = await h.json();
       translationConfigured = !!health.translation_configured;
-      if(health.storage_backend){
-        console.info("Meeting storage backend:", health.storage_backend);
-      }
-      if(!translationConfigured){
+if(!translationConfigured){
         const notice = $("#translationNotice");
         notice.textContent = "현재 무료 테스트 모드에서는 영어·일본어 자동 번역이 비활성화되어 있습니다.";
         notice.classList.remove("hidden");

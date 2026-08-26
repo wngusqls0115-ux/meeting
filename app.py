@@ -271,6 +271,7 @@ def init_db():
                 completion_note TEXT,
                 completed_date TEXT,
                 memo TEXT,
+                color TEXT NOT NULL DEFAULT '#64748B',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
@@ -316,6 +317,7 @@ def init_db():
             "ALTER TABLE follow_up_items ADD COLUMN IF NOT EXISTS completion_note TEXT",
             "ALTER TABLE follow_up_items ADD COLUMN IF NOT EXISTS completed_date TEXT",
             "ALTER TABLE follow_up_items ADD COLUMN IF NOT EXISTS memo TEXT",
+            "ALTER TABLE follow_up_items ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT '#64748B'",
             "ALTER TABLE folders ADD COLUMN IF NOT EXISTS parent_id BIGINT",
             "ALTER TABLE folders ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT '#4F6B8A'",
         ]
@@ -401,6 +403,7 @@ def init_db():
                 completion_note TEXT,
                 completed_date TEXT,
                 memo TEXT,
+                color TEXT NOT NULL DEFAULT '#64748B',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
@@ -467,6 +470,8 @@ def init_db():
             conn.execute("ALTER TABLE follow_up_items ADD COLUMN completed_date TEXT")
         if "memo" not in fu_columns:
             conn.execute("ALTER TABLE follow_up_items ADD COLUMN memo TEXT")
+        if "color" not in fu_columns:
+            conn.execute("ALTER TABLE follow_up_items ADD COLUMN color TEXT NOT NULL DEFAULT '#64748B'")
 
         folder_columns = {r[1] for r in conn.execute("PRAGMA table_info(folders)").fetchall()}
         if "parent_id" not in folder_columns:
@@ -547,6 +552,7 @@ class FollowUpItemIn(BaseModel):
     completion_note: Optional[str] = None
     completed_date: Optional[str] = None
     memo: Optional[str] = None
+    color: str = "#64748B"
 
 
 class DraftIn(BaseModel):
@@ -627,6 +633,9 @@ def normalize_follow_up_items(items):
         completion_note = (item.completion_note or "").strip() or None
         completed_date = validate_follow_up_date(item.completed_date, "F/U 완료일")
         memo = (item.memo or "").strip() or None
+        color = (item.color or "#64748B").strip().upper()
+        if color not in FOLDER_COLOR_PALETTE:
+            raise HTTPException(status_code=400, detail="허용된 10개 F/U 색상 중 하나를 선택해 주세요.")
 
         if not task and not owner and not start_date and not end_date and not completion_note and not memo:
             continue
@@ -650,6 +659,7 @@ def normalize_follow_up_items(items):
             "completion_note": completion_note,
             "completed_date": completed_date,
             "memo": memo,
+            "color": color,
         })
     return normalized
 
@@ -682,9 +692,9 @@ def replace_follow_up_items(conn, meeting_id: int, items):
             """
             INSERT INTO follow_up_items(
                 meeting_id, task, owner, start_date, end_date,
-                status, completion_note, completed_date, memo,
+                status, completion_note, completed_date, memo, color,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 meeting_id,
@@ -696,6 +706,7 @@ def replace_follow_up_items(conn, meeting_id: int, items):
                 item["completion_note"],
                 item["completed_date"],
                 item["memo"],
+                item["color"],
                 now,
                 now,
             ),
@@ -708,7 +719,7 @@ def get_follow_up_items(meeting_id: int):
     rows = conn.execute(
         """
         SELECT id, meeting_id, task, owner, start_date, end_date,
-               status, completion_note, completed_date, memo, created_at, updated_at
+               status, completion_note, completed_date, memo, color, created_at, updated_at
         FROM follow_up_items
         WHERE meeting_id=?
         ORDER BY
@@ -1615,7 +1626,7 @@ def update_follow_up_memo(
     updated = conn.execute(
         """
         SELECT id, meeting_id, task, owner, start_date, end_date,
-               status, completion_note, completed_date, memo, created_at, updated_at
+               status, completion_note, completed_date, memo, color, created_at, updated_at
         FROM follow_up_items
         WHERE id=?
         """,
@@ -1623,6 +1634,44 @@ def update_follow_up_memo(
     ).fetchone()
     conn.close()
     return dict(updated)
+
+
+@app.get("/api/follow-ups/search")
+def search_follow_ups(q: str = "", user=Depends(require_user)):
+    query = (q or "").strip()
+    if not query:
+        return {"q": "", "items": []}
+
+    like = f"%{query}%"
+    conn = db()
+    rows = conn.execute(
+        """
+        SELECT
+            fu.id, fu.meeting_id, fu.task, fu.owner, fu.start_date, fu.end_date,
+            fu.status, fu.completion_note, fu.completed_date, fu.memo, fu.color,
+            m.title AS meeting_title,
+            m.folder_id,
+            f.name AS folder_name,
+            f.color AS folder_color
+        FROM follow_up_items fu
+        JOIN meetings m ON m.id = fu.meeting_id
+        LEFT JOIN folders f ON f.id = m.folder_id
+        WHERE
+            fu.task LIKE ?
+            OR COALESCE(fu.owner, '') LIKE ?
+            OR COALESCE(fu.memo, '') LIKE ?
+            OR COALESCE(fu.completion_note, '') LIKE ?
+            OR m.title LIKE ?
+        ORDER BY
+            CASE WHEN fu.status='completed' THEN 1 ELSE 0 END,
+            COALESCE(fu.end_date, fu.start_date, '9999-12-31'),
+            fu.id DESC
+        LIMIT 100
+        """,
+        (like, like, like, like, like),
+    ).fetchall()
+    conn.close()
+    return {"q": query, "items": [dict(r) for r in rows]}
 
 
 @app.get("/api/follow-ups/calendar")
@@ -1647,7 +1696,7 @@ def follow_up_calendar(month: str, user=Depends(require_user)):
         """
         SELECT
             fu.id, fu.meeting_id, fu.task, fu.owner, fu.start_date, fu.end_date,
-            fu.status, fu.completion_note, fu.completed_date, fu.memo,
+            fu.status, fu.completion_note, fu.completed_date, fu.memo, fu.color,
             m.title AS meeting_title,
             m.folder_id,
             f.name AS folder_name,
