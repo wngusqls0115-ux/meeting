@@ -1826,33 +1826,71 @@ def get_meeting(meeting_id: int, lang: str = Query(default="ko", pattern="^(ko|e
 
 @app.patch("/api/meetings/{meeting_id}/folder")
 def move_meeting_folder(meeting_id: int, payload: MeetingFolderMoveIn, user=Depends(require_user)):
-    get_original_meeting(meeting_id)
-
     conn = db()
-    folder_name = None
-    if payload.folder_id is not None:
-        folder = conn.execute(
-            "SELECT id, name FROM folders WHERE id=?",
-            (payload.folder_id,),
+    try:
+        meeting = conn.execute(
+            "SELECT id, folder_id FROM meetings WHERE id=?",
+            (meeting_id,),
         ).fetchone()
-        if not folder:
-            conn.close()
-            raise HTTPException(status_code=404, detail="이동할 폴더를 찾을 수 없습니다.")
-        folder_name = folder["name"]
+        if not meeting:
+            raise HTTPException(status_code=404, detail="회의록을 찾을 수 없습니다.")
 
-    conn.execute(
-        "UPDATE meetings SET folder_id=?, updated_at=? WHERE id=?",
-        (payload.folder_id, now_iso(), meeting_id),
-    )
-    conn.commit()
-    conn.close()
+        folder_name = None
+        if payload.folder_id is not None:
+            folder = conn.execute(
+                "SELECT id, name FROM folders WHERE id=?",
+                (payload.folder_id,),
+            ).fetchone()
+            if not folder:
+                raise HTTPException(status_code=404, detail="이동할 폴더를 찾을 수 없습니다.")
+            folder_name = folder["name"]
 
-    return {
-        "ok": True,
-        "meeting_id": meeting_id,
-        "folder_id": payload.folder_id,
-        "folder_name": folder_name,
-    }
+        conn.execute(
+            "UPDATE meetings SET folder_id=?, updated_at=? WHERE id=?",
+            (payload.folder_id, now_iso(), meeting_id),
+        )
+        conn.commit()
+
+        # Do not report success from the UPDATE statement alone.
+        # Read the persisted value back from the same database.
+        verified = conn.execute(
+            """
+            SELECT m.id, m.folder_id, m.updated_at,
+                   f.name AS folder_name, f.color AS folder_color
+            FROM meetings m
+            LEFT JOIN folders f ON f.id = m.folder_id
+            WHERE m.id=?
+            """,
+            (meeting_id,),
+        ).fetchone()
+        if not verified:
+            raise HTTPException(status_code=500, detail="회의록 이동 후 DB 재조회에 실패했습니다.")
+
+        stored_folder_id = verified["folder_id"]
+        expected_folder_id = payload.folder_id
+        if stored_folder_id != expected_folder_id:
+            raise HTTPException(
+                status_code=500,
+                detail=f"회의록 위치 저장 검증 실패: expected={expected_folder_id}, stored={stored_folder_id}",
+            )
+
+        return {
+            "ok": True,
+            "verified": True,
+            "meeting_id": meeting_id,
+            "folder_id": stored_folder_id,
+            "folder_name": verified["folder_name"],
+            "folder_color": verified["folder_color"],
+            "updated_at": verified["updated_at"],
+        }
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"회의록 위치 저장 실패: {exc}")
+    finally:
+        conn.close()
 
 
 @app.put("/api/meetings/{meeting_id}")

@@ -427,11 +427,10 @@ function clearFolderPointerHighlights(){
   $("#folderRootDropZone")?.classList.remove("drag-over");
 }
 
-function setupFolderPointerDrag(handle, row, folder){
-  let local = null;
+function setupFolderMoveHandle(handle, row, folder){
+  let drag = null;
 
-  const cleanup = () => {
-    if(local?.ghost) local.ghost.remove();
+  const resetVisuals = () => {
     row.classList.remove("folder-dragging");
     document.body.classList.remove("folder-drag-active");
     clearFolderPointerHighlights();
@@ -439,99 +438,90 @@ function setupFolderPointerDrag(handle, row, folder){
 
   handle.addEventListener("pointerdown", e => {
     if(e.button !== 0) return;
-    local = {
+    e.preventDefault();
+    e.stopPropagation();
+
+    drag = {
       pointerId:e.pointerId,
       startX:e.clientX,
       startY:e.clientY,
-      dragging:false,
+      active:false,
       targetFolderId:null,
-      toRoot:false,
-      ghost:null
+      moveToRoot:false
     };
     try { handle.setPointerCapture(e.pointerId); } catch {}
   });
 
   handle.addEventListener("pointermove", e => {
-    if(!local || e.pointerId !== local.pointerId) return;
-    const distance = Math.hypot(e.clientX-local.startX, e.clientY-local.startY);
+    if(!drag || e.pointerId !== drag.pointerId) return;
 
-    if(!local.dragging && distance >= 6){
-      local.dragging = true;
+    const distance = Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY);
+    if(!drag.active && distance >= 4){
+      drag.active = true;
       folderDragInProgress = true;
       closeFolderContextMenu();
       row.classList.add("folder-dragging");
       document.body.classList.add("folder-drag-active");
-
-      const ghost = document.createElement("div");
-      ghost.className = "folder-pointer-ghost";
-      ghost.textContent = folder.name;
-      document.body.appendChild(ghost);
-      local.ghost = ghost;
     }
 
-    if(!local.dragging) return;
+    if(!drag.active) return;
     e.preventDefault();
 
-    if(local.ghost){
-      local.ghost.style.left = `${e.clientX + 12}px`;
-      local.ghost.style.top = `${e.clientY + 12}px`;
-    }
-
     clearFolderPointerHighlights();
-    local.targetFolderId = null;
-    local.toRoot = false;
+    drag.targetFolderId = null;
+    drag.moveToRoot = false;
 
-    const root = $("#folderRootDropZone");
-    if(root){
-      const rect = root.getBoundingClientRect();
-      if(e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom){
-        root.classList.add("drag-over");
-        local.toRoot = true;
+    const rootZone = $("#folderRootDropZone");
+    if(rootZone){
+      const rect = rootZone.getBoundingClientRect();
+      if(
+        e.clientX >= rect.left && e.clientX <= rect.right &&
+        e.clientY >= rect.top && e.clientY <= rect.bottom
+      ){
+        rootZone.classList.add("drag-over");
+        drag.moveToRoot = true;
         return;
       }
     }
 
-    const under = document.elementFromPoint(e.clientX, e.clientY);
-    const targetRow = under?.closest?.(".user-folder-row");
-    if(targetRow){
-      const targetId = Number(targetRow.dataset.folderValue);
-      if(targetId && targetId !== Number(folder.id)){
-        targetRow.classList.add("pointer-drop-target");
-        local.targetFolderId = targetId;
-      }
+    const element = document.elementFromPoint(e.clientX, e.clientY);
+    const targetRow = element?.closest?.(".user-folder-row");
+    if(!targetRow) return;
+
+    const targetId = Number(targetRow.dataset.folderValue);
+    if(targetId && targetId !== Number(folder.id)){
+      targetRow.classList.add("pointer-drop-target");
+      drag.targetFolderId = targetId;
     }
   });
 
   const finish = async (e, cancelled=false) => {
-    if(!local || e.pointerId !== local.pointerId) return;
-    const snapshot = local;
-    local = null;
-    cleanup();
+    if(!drag || e.pointerId !== drag.pointerId) return;
+    const result = drag;
+    drag = null;
 
+    resetVisuals();
     try { handle.releasePointerCapture(e.pointerId); } catch {}
 
-    if(!snapshot.dragging) return;
-
-    // Delay reset so the synthetic click after pointerup cannot open the folder.
-    setTimeout(() => { folderDragInProgress = false; }, 140);
-
+    if(!result.active) return;
+    setTimeout(() => { folderDragInProgress = false; }, 120);
     if(cancelled) return;
 
     try {
-      if(snapshot.toRoot){
+      if(result.moveToRoot){
         await moveFolderToParent(folder.id, null);
-      } else if(snapshot.targetFolderId){
-        await moveFolderToParent(folder.id, snapshot.targetFolderId);
+      } else if(result.targetFolderId){
+        await moveFolderToParent(folder.id, result.targetFolderId);
       } else {
-        showToast("이동할 폴더 위에 놓아 주세요.", "info");
+        showToast("이동할 폴더 위에 = 버튼을 놓아 주세요.", "info");
       }
     } catch(err) {
       showToast("폴더 이동 실패: " + err.message, "error");
     }
   };
 
-  handle.addEventListener("pointerup", e => { finish(e, false); });
-  handle.addEventListener("pointercancel", e => { finish(e, true); });
+  handle.addEventListener("pointerup", e => finish(e, false));
+  handle.addEventListener("pointercancel", e => finish(e, true));
 }
 
 function renderFolders(data){
@@ -584,7 +574,7 @@ function renderFolders(data){
     row.className = "folder-row user-folder-row" + (String(currentFolder) === String(f.id) ? " active" : "");
     row.dataset.folderValue = String(f.id);
     row.draggable = false;
-    row.title = "드래그하여 폴더 이동 · 오른쪽 클릭하여 이름/색상 변경";
+    row.title = "폴더명 클릭: 회의록 펼침/접힘 · = 버튼: 폴더 이동";
 
     row.addEventListener("dragover", e => {
       if(e.dataTransfer.types.includes("application/x-folder-id") || e.dataTransfer.types.includes("text/meeting-id")){
@@ -615,6 +605,15 @@ function renderFolders(data){
       e.stopPropagation();
       openFolderContextMenu(f, e.clientX, e.clientY);
     });
+
+    const moveHandle = document.createElement("button");
+    moveHandle.type = "button";
+    moveHandle.className = "folder-move-handle";
+    moveHandle.textContent = "=";
+    moveHandle.title = `"${f.name}" 폴더 이동`;
+    moveHandle.setAttribute("aria-label", `"${f.name}" 폴더 이동`);
+    setupFolderMoveHandle(moveHandle, row, f);
+    row.appendChild(moveHandle);
 
     const indent = document.createElement("span");
     indent.className = "folder-indent";
@@ -647,7 +646,6 @@ function renderFolders(data){
     btn.type = "button";
     btn.className = "folder-filter-btn tree-folder-btn";
     btn.draggable = false;
-    setupFolderPointerDrag(btn, row, f);
     btn.innerHTML = `<span class="folder-color-dot" style="background:${escapeHtml(f.color || "#536878")}"></span><span class="folder-label">${escapeHtml(f.name)}</span><span class="folder-count">${Number(f.meeting_count || 0)}</span>`;
     btn.onclick = async () => {
       if(folderDragInProgress) return;
@@ -970,19 +968,40 @@ async function deleteFolderDirect(folderId, folderName, meetingCount){
 
 async function moveMeetingToFolder(meetingId, folderId, folderLabel=null){
   const status = $("#quickFolderStatus");
+  const expectedFolderId = folderId == null ? null : Number(folderId);
+
   if(status && Number(meetingId) === Number(currentMeetingId)){
-    status.textContent = "이동 중...";
+    status.textContent = "저장 중...";
   }
 
   try {
     const result = await api(`/api/meetings/${meetingId}/folder`, {
       method:"PATCH",
-      body:JSON.stringify({folder_id:folderId})
+      body:JSON.stringify({folder_id:expectedFolderId})
     });
 
-    if(Number(meetingId) === Number(currentMeetingId) && currentMeeting){
-      currentMeeting.folder_id = result.folder_id;
-      currentMeeting.folder_name = result.folder_name;
+    if(!result.verified){
+      throw new Error("서버가 회의록 위치 저장을 검증하지 못했습니다.");
+    }
+
+    const storedFolderId = result.folder_id == null ? null : Number(result.folder_id);
+    if(storedFolderId !== expectedFolderId){
+      throw new Error(`위치 저장 불일치: 요청 ${expectedFolderId}, 저장 ${storedFolderId}`);
+    }
+
+    // A second independent GET prevents a successful PATCH UI response from
+    // masking a persistence/readback problem.
+    const verifiedMeeting = await api(`/api/meetings/${meetingId}?lang=ko`);
+    const readbackFolderId = verifiedMeeting.folder_id == null
+      ? null
+      : Number(verifiedMeeting.folder_id);
+
+    if(readbackFolderId !== expectedFolderId){
+      throw new Error(`DB 재조회 검증 실패: 요청 ${expectedFolderId}, 재조회 ${readbackFolderId}`);
+    }
+
+    if(Number(meetingId) === Number(currentMeetingId)){
+      currentMeeting = verifiedMeeting;
       renderMeeting(currentMeeting);
     }
 
@@ -990,23 +1009,37 @@ async function moveMeetingToFolder(meetingId, folderId, folderLabel=null){
     await loadMeetings($("#search").value);
 
     if(status && Number(meetingId) === Number(currentMeetingId)){
-      status.textContent = "이동 완료";
-      setTimeout(()=>status.textContent="", 1200);
+      status.textContent = "저장 완료";
+      setTimeout(()=>status.textContent="", 1400);
     }
 
-    showToast(`회의록을 "${folderLabel || result.folder_name || "미분류"}"로 이동했습니다.`, "success");
+    showToast(
+      `회의록을 "${folderLabel || result.folder_name || "미분류"}"에 저장했습니다.`,
+      "success"
+    );
+    return verifiedMeeting;
   } catch(err) {
     if(status && Number(meetingId) === Number(currentMeetingId)){
-      status.textContent = "이동 실패";
-      setTimeout(()=>status.textContent="", 1600);
+      status.textContent = "저장 실패";
+      setTimeout(()=>status.textContent="", 1800);
     }
-    showToast("회의록 이동 실패: " + err.message, "error");
-    if(currentMeeting && Number(meetingId) === Number(currentMeetingId)){
-      $("#quickFolderSelect").value = currentMeeting.folder_id ? String(currentMeeting.folder_id) : "";
-    }
+
+    showToast("회의록 위치 저장 실패: " + err.message, "error");
+
+    // Re-read server truth so UI never keeps a non-persisted folder position.
+    try {
+      const serverMeeting = await api(`/api/meetings/${meetingId}?lang=ko`);
+      if(Number(meetingId) === Number(currentMeetingId)){
+        currentMeeting = serverMeeting;
+        renderMeeting(serverMeeting);
+      }
+      await loadFolders();
+      await loadMeetings($("#search").value);
+    } catch {}
+
+    throw err;
   }
 }
-
 async function loadMeetings(q=""){
   const rows = await api("/api/meetings?q=" + encodeURIComponent(q) + "&folder=" + encodeURIComponent(currentFolder));
 
