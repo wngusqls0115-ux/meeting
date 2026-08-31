@@ -1,0 +1,4 @@
+MEETING_APP_PACKAGE=V12.1
+BASE=V12
+FEATURE=large_calendar_detail
+DEPLOYMENT_MODE=diagnostic_regression_lock

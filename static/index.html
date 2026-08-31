@@ -4,7 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>회의록</title>
-  <link rel="stylesheet" href="/styles.css?v=20260826-folder-handle-persistence-v9"/>
+  <link rel="stylesheet" href="/styles.css?v=20260826-calendar-detail-v12"/>
 </head>
 <body>
   <div id="appErrorBanner" class="app-error-banner hidden"></div>
@@ -34,9 +34,17 @@
         <div id="folderList" class="folder-list"></div>
       </section>
 
+      <section class="folder-meeting-section">
+        <input id="search" class="search" placeholder="선택한 폴더에서 검색"/>
+        <div id="meetingList" class="meeting-list"></div>
+      </section>
+
       <section class="calendar-section">
         <div class="calendar-head">
-          <strong>F/U 캘린더</strong>
+          <button id="openCalendarDetail" class="calendar-open-detail" type="button" title="오른쪽에서 크게 보기">
+            <strong>F/U 캘린더</strong>
+            <span>확대 보기</span>
+          </button>
           <div class="calendar-nav">
             <button id="calendarPrev" type="button" aria-label="이전 달">‹</button>
             <button id="calendarToday" type="button">오늘</button>
@@ -44,7 +52,7 @@
           </div>
         </div>
         <input id="fuSearch" class="fu-search" placeholder="F/U 검색 · 업무 / 담당자 / 메모 / 회의명"/>
-        <div id="calendarMonthLabel" class="calendar-month-label"></div>
+        <button id="calendarMonthLabel" class="calendar-month-label calendar-month-open" type="button" title="오른쪽에서 크게 보기"></button>
         <div class="calendar-weekdays">
           <span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span>
         </div>
@@ -55,12 +63,47 @@
         </div>
         <div id="calendarFollowUpList" class="calendar-followup-list"></div>
       </section>
-
-      <input id="search" class="search" placeholder="선택한 폴더에서 검색"/>
-      <div id="meetingList" class="meeting-list"></div>
     </aside>
     <main class="main">
       <div id="empty" class="empty hidden"><h1>회의 기록을 한 곳에서</h1><p>PLAUD 전사본을 가져와 저장하고, 번역하고, 검색하고, 로그인 사용자끼리 공유할 수 있습니다.</p><button id="emptyNewBtn" class="primary">첫 회의 추가</button></div>
+      <section id="calendarDetail" class="calendar-detail hidden">
+        <div class="calendar-detail-toolbar">
+          <div>
+            <div class="calendar-detail-kicker">F/U CALENDAR</div>
+            <h1 id="calendarDetailTitle">월간 F/U 캘린더</h1>
+          </div>
+          <div class="calendar-detail-actions">
+            <button id="calendarDetailPrev" class="secondary" type="button">‹ 이전 달</button>
+            <button id="calendarDetailToday" class="secondary" type="button">오늘</button>
+            <button id="calendarDetailNext" class="secondary" type="button">다음 달 ›</button>
+          </div>
+        </div>
+
+        <div class="calendar-detail-summary">
+          <div><span>월</span><strong id="calendarDetailMonthLabel">-</strong></div>
+          <div><span>전체 F/U</span><strong id="calendarDetailCount">0</strong></div>
+          <div><span>진행중</span><strong id="calendarDetailOpenCount">0</strong></div>
+          <div><span>완료</span><strong id="calendarDetailDoneCount">0</strong></div>
+        </div>
+
+        <div class="calendar-detail-layout">
+          <div class="calendar-detail-calendar-wrap">
+            <div class="calendar-detail-weekdays">
+              <span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span>
+            </div>
+            <div id="calendarDetailGrid" class="calendar-detail-grid"></div>
+          </div>
+
+          <aside class="calendar-detail-side">
+            <div class="calendar-detail-side-head">
+              <strong id="calendarDetailListTitle">이번 달 F/U</strong>
+              <span id="calendarDetailListCount">0</span>
+            </div>
+            <div id="calendarDetailList" class="calendar-detail-list"></div>
+          </aside>
+        </div>
+      </section>
+
       <article id="detail" class="detail hidden">
         <header class="detail-head">
           <div class="detail-title-block">
@@ -246,8 +289,8 @@
   <dialog id="passwordDialog"><form id="passwordForm" method="dialog">
     <div class="dialog-head"><h2>비밀번호 변경</h2><button type="button" class="icon" id="closePassword">×</button></div>
     <label>현재 비밀번호<input id="currentPassword" type="password" autocomplete="current-password" required/></label>
-    <label>새 비밀번호<input id="newPassword" type="password" autocomplete="new-password" minlength="12" required/></label>
-    <p class="dialog-note">12자 이상, 영문 대문자·소문자·숫자를 포함해야 합니다. 변경 후 다시 로그인합니다.</p>
+    <label>새 비밀번호<input id="newPassword" type="password" autocomplete="new-password" required/></label>
+    <p class="dialog-note">비밀번호 형식 제한은 없습니다. 빈 비밀번호만 사용할 수 없습니다. 변경 후 다시 로그인합니다.</p>
     <div id="passwordError" class="form-error hidden"></div>
     <div class="dialog-actions"><button type="button" class="secondary" id="cancelPassword">취소</button><button class="primary" type="submit">변경</button></div>
   </form></dialog>
@@ -258,7 +301,7 @@
     <form id="createUserForm" class="admin-create-form">
       <label>이름<input id="adminDisplayName" placeholder="홍길동"/></label>
       <label>이메일<input id="adminEmail" type="email" required placeholder="name@company.com"/></label>
-      <label>초기 비밀번호<input id="adminPassword" type="password" minlength="12" required/></label>
+      <label>초기 비밀번호<input id="adminPassword" type="password" required/></label>
       <button class="primary" type="submit">사용자 추가</button>
     </form>
     <div id="adminError" class="form-error hidden"></div>
@@ -266,8 +309,8 @@
   </div></dialog>
 
 
-  <script src="/config.js?v=20260826-folder-handle-persistence-v9"></script>
-  <script src="/app.js?v=20260826-folder-handle-persistence-v9"></script>
+  <script src="/config.js?v=20260826-calendar-detail-v12"></script>
+  <script src="/app.js?v=20260826-calendar-detail-v12"></script>
   <script>
     setTimeout(() => {
       if (!window.MEETING_APP_LOADED) {

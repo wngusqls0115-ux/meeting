@@ -786,12 +786,10 @@ def public_user(row):
 
 
 def validate_new_password(password: str):
-    if len(password) < 12:
-        raise HTTPException(status_code=400, detail="비밀번호는 12자 이상이어야 합니다.")
-    if password.lower() == password or password.upper() == password:
-        raise HTTPException(status_code=400, detail="비밀번호에는 영문 대문자와 소문자를 모두 포함해 주세요.")
-    if not any(ch.isdigit() for ch in password):
-        raise HTTPException(status_code=400, detail="비밀번호에는 숫자를 1개 이상 포함해 주세요.")
+    # User-approved free-form password policy.
+    # Preserve the password exactly as entered; only an empty string is rejected.
+    if password is None or len(password) == 0:
+        raise HTTPException(status_code=400, detail="비밀번호를 입력해 주세요.")
     return True
 
 

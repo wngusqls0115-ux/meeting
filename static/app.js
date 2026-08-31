@@ -33,6 +33,7 @@ let folderDragInProgress = false;
 let fuMemoTarget = null;
 let fuSearchTimer = null;
 let folderPointerState = null;
+let calendarDetailSelectedDate = null;
 let folderCreateParentId = null;
 let folderCreateColor = "#536878";
 let folderColorTarget = null;
@@ -1111,6 +1112,7 @@ async function loadMeetings(q=""){
   emptyEl.classList.toggle("hidden", rows.length !== 0 || !!currentMeetingId || specificFolder);
 }
 async function openMeeting(id, lang="ko"){
+  hideCalendarDetail();
   const m=await api(`/api/meetings/${id}?lang=${lang}`);
   currentMeetingId=id; currentLanguage=lang; currentMeeting=m; renderMeeting(m);
   emptyEl.classList.add("hidden"); detailEl.classList.remove("hidden");
@@ -1263,12 +1265,139 @@ function itemCoversDate(item, day){
   return !!start && !!end && start <= key && key <= end;
 }
 
+function showCalendarDetail(selectedDate=null){
+  currentMeetingId = null;
+  currentMeeting = null;
+  emptyEl.classList.add("hidden");
+  detailEl.classList.add("hidden");
+  $("#calendarDetail").classList.remove("hidden");
+  if(selectedDate) calendarDetailSelectedDate = selectedDate;
+  renderCalendarDetail();
+}
+
+function hideCalendarDetail(){
+  $("#calendarDetail").classList.add("hidden");
+}
+
+function renderCalendarDetailList(items, selectedDate=null){
+  const list = $("#calendarDetailList");
+  if(!list) return;
+  list.innerHTML = "";
+  $("#calendarDetailListTitle").textContent = selectedDate ? `${selectedDate} F/U` : "이번 달 F/U";
+  $("#calendarDetailListCount").textContent = String(items.length);
+
+  if(!items.length){
+    list.innerHTML = `<div class="calendar-detail-empty">해당 기간의 F/U가 없습니다.</div>`;
+    return;
+  }
+
+  items.forEach(item => {
+    const done = item.status === "completed";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "calendar-detail-fu" + (done ? " completed" : "");
+    btn.innerHTML = `
+      <span class="calendar-detail-fu-color" style="background:${escapeHtml(item.color || item.folder_color || "#64748B")}"></span>
+      <span class="calendar-detail-fu-body">
+        <strong>${done ? "✓ " : ""}${escapeHtml(item.task)}</strong>
+        <small>${escapeHtml(item.owner || "담당자 미정")} · ${escapeHtml(formatFuPeriod(item))}</small>
+        <em>${escapeHtml(item.meeting_title || "")}${item.memo ? " · 메모 있음" : ""}</em>
+      </span>`;
+    btn.onclick = () => openFuMemoDialog(item);
+    list.appendChild(btn);
+  });
+}
+
+function renderCalendarDetail(){
+  const panel = $("#calendarDetail");
+  if(!panel || panel.classList.contains("hidden")) return;
+
+  const year = calendarCursor.getFullYear();
+  const month = calendarCursor.getMonth();
+  const first = new Date(year, month, 1);
+  const last = new Date(year, month + 1, 0);
+
+  $("#calendarDetailMonthLabel").textContent = `${year}년 ${month + 1}월`;
+  $("#calendarDetailTitle").textContent = `${year}년 ${month + 1}월 F/U 캘린더`;
+  $("#calendarDetailCount").textContent = String(calendarItems.length);
+  $("#calendarDetailOpenCount").textContent = String(calendarItems.filter(x => x.status !== "completed").length);
+  $("#calendarDetailDoneCount").textContent = String(calendarItems.filter(x => x.status === "completed").length);
+
+  const grid = $("#calendarDetailGrid");
+  grid.innerHTML = "";
+
+  for(let i=0; i<first.getDay(); i++){
+    const blank = document.createElement("div");
+    blank.className = "calendar-detail-day blank";
+    grid.appendChild(blank);
+  }
+
+  const todayKey = ymd(new Date());
+
+  for(let day=1; day<=last.getDate(); day++){
+    const date = new Date(year, month, day);
+    const key = ymd(date);
+    const items = calendarItems.filter(item => itemCoversDate(item, date));
+
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "calendar-detail-day";
+    if(key === todayKey) cell.classList.add("today");
+    if(calendarDetailSelectedDate === key) cell.classList.add("selected");
+    if(items.length) cell.classList.add("has-followup");
+
+    const head = document.createElement("div");
+    head.className = "calendar-detail-day-head";
+    head.innerHTML = `<strong>${day}</strong><span>${items.length ? items.length : ""}</span>`;
+    cell.appendChild(head);
+
+    const events = document.createElement("div");
+    events.className = "calendar-detail-events";
+
+    items.slice(0,4).forEach(item => {
+      const event = document.createElement("div");
+      event.className = "calendar-detail-event" + (item.status === "completed" ? " completed" : "");
+      event.style.borderLeftColor = item.color || item.folder_color || "#64748B";
+      event.innerHTML = `<span>${escapeHtml(item.task)}</span><small>${escapeHtml(item.owner || "")}</small>`;
+      events.appendChild(event);
+    });
+
+    if(items.length > 4){
+      const more = document.createElement("div");
+      more.className = "calendar-detail-more";
+      more.textContent = `+${items.length-4}개 더`;
+      events.appendChild(more);
+    }
+
+    cell.appendChild(events);
+    cell.onclick = () => {
+      calendarDetailSelectedDate = key;
+      renderCalendarDetail();
+      renderCalendarDetailList(items, key);
+    };
+    grid.appendChild(cell);
+  }
+
+  if(calendarDetailSelectedDate){
+    const selected = new Date(calendarDetailSelectedDate + "T00:00:00");
+    if(selected.getFullYear() === year && selected.getMonth() === month){
+      const selectedItems = calendarItems.filter(item => itemCoversDate(item, selected));
+      renderCalendarDetailList(selectedItems, calendarDetailSelectedDate);
+      return;
+    }
+  }
+
+  calendarDetailSelectedDate = null;
+  renderCalendarDetailList(calendarItems);
+}
+
 async function loadCalendar(){
   const month = monthKey(calendarCursor);
   try {
     const data = await api(`/api/follow-ups/calendar?month=${encodeURIComponent(month)}`);
     calendarItems = data.items || [];
     renderCalendar();
+    renderCalendarDetail();
   } catch(err) {
     $("#calendarGrid").innerHTML = `<div class="calendar-error">캘린더 조회 실패</div>`;
     $("#calendarFollowUpList").innerHTML = `<div class="calendar-empty">${escapeHtml(err.message)}</div>`;
@@ -1688,6 +1817,26 @@ $("#fuSearch").addEventListener("input", () => {
   }, 220);
 });
 
+$("#openCalendarDetail").onclick = () => showCalendarDetail();
+$("#calendarMonthLabel").onclick = () => showCalendarDetail();
+
+$("#calendarDetailPrev").onclick = async () => {
+  calendarCursor = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth()-1, 1);
+  calendarDetailSelectedDate = null;
+  await loadCalendar();
+};
+$("#calendarDetailNext").onclick = async () => {
+  calendarCursor = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth()+1, 1);
+  calendarDetailSelectedDate = null;
+  await loadCalendar();
+};
+$("#calendarDetailToday").onclick = async () => {
+  const now = new Date();
+  calendarCursor = new Date(now.getFullYear(), now.getMonth(), 1);
+  calendarDetailSelectedDate = ymd(now);
+  await loadCalendar();
+};
+
 $("#calendarPrev").onclick = async () => {
   calendarCursor = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth()-1, 1);
   await loadCalendar();
@@ -1769,7 +1918,7 @@ async function loadAdminUsers(){
         await loadAdminUsers();
       };
       item.querySelector(".reset-user").onclick = async () => {
-        const pw = prompt(`${u.email}의 새 비밀번호를 입력하세요.\n12자 이상, 대/소문자와 숫자를 포함해야 합니다.`);
+        const pw = prompt(`${u.email}의 새 비밀번호를 입력하세요.\n형식 제한은 없으며 빈 값만 사용할 수 없습니다.`);
         if(!pw) return;
         try {
           await api(`/api/admin/users/${u.id}`, {

@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="ko">
-<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>공유 회의록</title><link rel="stylesheet" href="/styles.css?v=20260826-folder-handle-persistence-v9"/></head>
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>공유 회의록</title><link rel="stylesheet" href="/styles.css?v=20260826-calendar-detail-v12"/></head>
 <body class="shared-page">
   <main class="shared-wrap">
     <div class="shared-top">
@@ -10,7 +10,7 @@
     <div id="sharedError" class="empty hidden"></div>
     <article id="sharedContent" class="detail hidden"><div id="sharedMeta" class="meta"></div><h1 id="sharedTitle"></h1><section><h2>요약</h2><div id="sharedSummary" class="paper"></div></section><section><h2>전체 전사</h2><pre id="sharedTranscript" class="paper transcript"></pre></section></article>
   </main>
-  <script src="/config.js?v=20260826-folder-handle-persistence-v9"></script>
+  <script src="/config.js?v=20260826-calendar-detail-v12"></script>
   <script>
     const API_BASE_URL = String(window.APP_CONFIG?.API_BASE_URL || "").replace(/\/$/, "");
     const apiUrl = (path) => `${API_BASE_URL}${path}`;
