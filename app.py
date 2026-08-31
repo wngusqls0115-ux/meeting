@@ -1592,6 +1592,7 @@ def add_meeting(payload: MeetingIn, user=Depends(require_user)):
 
 class FollowUpMemoIn(BaseModel):
     memo: Optional[str] = None
+    color: Optional[str] = None
 
 
 @app.patch("/api/follow-ups/{follow_up_id}/memo")
@@ -1615,9 +1616,14 @@ def update_follow_up_memo(
         raise HTTPException(status_code=404, detail="F/U 항목을 찾을 수 없습니다.")
 
     memo = (payload.memo or "").strip() or None
+    existing = conn.execute("SELECT color FROM follow_up_items WHERE id=?", (follow_up_id,)).fetchone()
+    color = (payload.color or (existing["color"] if existing else None) or "#64748B").strip().upper()
+    if color not in FOLDER_COLOR_PALETTE:
+        conn.close()
+        raise HTTPException(status_code=400, detail="허용된 10개 F/U 색상 중 하나를 선택해 주세요.")
     conn.execute(
-        "UPDATE follow_up_items SET memo=?, updated_at=? WHERE id=?",
-        (memo, now_iso(), follow_up_id),
+        "UPDATE follow_up_items SET memo=?, color=?, updated_at=? WHERE id=?",
+        (memo, color, now_iso(), follow_up_id),
     )
     conn.commit()
 

@@ -34,6 +34,7 @@ let fuMemoTarget = null;
 let fuSearchTimer = null;
 let folderPointerState = null;
 let calendarDetailSelectedDate = null;
+let fuMemoSelectedColor = "#64748B";
 let folderCreateParentId = null;
 let folderCreateColor = "#536878";
 let folderColorTarget = null;
@@ -428,20 +429,120 @@ function clearFolderPointerHighlights(){
   $("#folderRootDropZone")?.classList.remove("drag-over");
 }
 
+function findFolderDropTarget(clientX, clientY, movingFolderId){
+  const direct = document.elementFromPoint(clientX, clientY)?.closest?.(".user-folder-row");
+  if(direct && Number(direct.dataset.folderValue) !== Number(movingFolderId)) return direct;
+
+  // Make the drop zone forgiving even when the cursor is in the gap between rows.
+  let best = null;
+  let bestDistance = Infinity;
+  $$(".user-folder-row").forEach(row => {
+    if(Number(row.dataset.folderValue) === Number(movingFolderId)) return;
+    const rect = row.getBoundingClientRect();
+    if(clientX < rect.left - 12 || clientX > rect.right + 12) return;
+    const cy = rect.top + rect.height / 2;
+    const distance = Math.abs(clientY - cy);
+    if(distance <= Math.max(18, rect.height * 0.75) && distance < bestDistance){
+      best = row;
+      bestDistance = distance;
+    }
+  });
+  return best;
+}
+
+function autoScrollFolderSidebar(clientY){
+  const sidebar = document.querySelector(".sidebar");
+  if(!sidebar) return;
+  const rect = sidebar.getBoundingClientRect();
+  const edge = 72;
+  if(clientY < rect.top + edge){
+    sidebar.scrollTop -= Math.max(8, Math.round((rect.top + edge - clientY) / 4));
+  } else if(clientY > rect.bottom - edge){
+    sidebar.scrollTop += Math.max(8, Math.round((clientY - (rect.bottom - edge)) / 4));
+  }
+}
+
 function setupFolderMoveHandle(handle, row, folder){
   let drag = null;
 
   const resetVisuals = () => {
     row.classList.remove("folder-dragging");
     document.body.classList.remove("folder-drag-active");
+    document.body.style.userSelect = "";
     clearFolderPointerHighlights();
   };
+
+  const removeWindowListeners = () => {
+    window.removeEventListener("pointermove", onMove, true);
+    window.removeEventListener("pointerup", onUp, true);
+    window.removeEventListener("pointercancel", onCancel, true);
+  };
+
+  const onMove = e => {
+    if(!drag || e.pointerId !== drag.pointerId) return;
+    const distance = Math.hypot(e.clientX-drag.startX, e.clientY-drag.startY);
+    if(!drag.active && distance >= 2){
+      drag.active = true;
+      folderDragInProgress = true;
+      closeFolderContextMenu();
+      row.classList.add("folder-dragging");
+      document.body.classList.add("folder-drag-active");
+      document.body.style.userSelect = "none";
+    }
+    if(!drag.active) return;
+    e.preventDefault();
+
+    autoScrollFolderSidebar(e.clientY);
+    clearFolderPointerHighlights();
+    drag.targetFolderId = null;
+    drag.moveToRoot = false;
+
+    const rootZone = $("#folderRootDropZone");
+    if(rootZone){
+      const rect = rootZone.getBoundingClientRect();
+      if(e.clientX >= rect.left-8 && e.clientX <= rect.right+8 && e.clientY >= rect.top-8 && e.clientY <= rect.bottom+8){
+        rootZone.classList.add("drag-over");
+        drag.moveToRoot = true;
+        return;
+      }
+    }
+
+    const targetRow = findFolderDropTarget(e.clientX, e.clientY, folder.id);
+    if(targetRow){
+      targetRow.classList.add("pointer-drop-target");
+      drag.targetFolderId = Number(targetRow.dataset.folderValue);
+    }
+  };
+
+  const finish = async (e, cancelled=false) => {
+    if(!drag || e.pointerId !== drag.pointerId) return;
+    const result = drag;
+    drag = null;
+    removeWindowListeners();
+    resetVisuals();
+    setTimeout(() => { folderDragInProgress = false; }, 100);
+
+    if(!result.active || cancelled) return;
+    try {
+      if(result.moveToRoot){
+        await moveFolderToParent(folder.id, null);
+      } else if(result.targetFolderId){
+        await moveFolderToParent(folder.id, result.targetFolderId);
+      } else {
+        showToast("이동할 폴더 위에 놓아 주세요.", "info");
+      }
+    } catch(err){
+      showToast("폴더 이동 실패: " + err.message, "error");
+    }
+  };
+
+  const onUp = e => { finish(e, false); };
+  const onCancel = e => { finish(e, true); };
 
   handle.addEventListener("pointerdown", e => {
     if(e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
-
     drag = {
       pointerId:e.pointerId,
       startX:e.clientX,
@@ -450,79 +551,10 @@ function setupFolderMoveHandle(handle, row, folder){
       targetFolderId:null,
       moveToRoot:false
     };
-    try { handle.setPointerCapture(e.pointerId); } catch {}
+    window.addEventListener("pointermove", onMove, {capture:true, passive:false});
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", onCancel, true);
   });
-
-  handle.addEventListener("pointermove", e => {
-    if(!drag || e.pointerId !== drag.pointerId) return;
-
-    const distance = Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY);
-    if(!drag.active && distance >= 4){
-      drag.active = true;
-      folderDragInProgress = true;
-      closeFolderContextMenu();
-      row.classList.add("folder-dragging");
-      document.body.classList.add("folder-drag-active");
-    }
-
-    if(!drag.active) return;
-    e.preventDefault();
-
-    clearFolderPointerHighlights();
-    drag.targetFolderId = null;
-    drag.moveToRoot = false;
-
-    const rootZone = $("#folderRootDropZone");
-    if(rootZone){
-      const rect = rootZone.getBoundingClientRect();
-      if(
-        e.clientX >= rect.left && e.clientX <= rect.right &&
-        e.clientY >= rect.top && e.clientY <= rect.bottom
-      ){
-        rootZone.classList.add("drag-over");
-        drag.moveToRoot = true;
-        return;
-      }
-    }
-
-    const element = document.elementFromPoint(e.clientX, e.clientY);
-    const targetRow = element?.closest?.(".user-folder-row");
-    if(!targetRow) return;
-
-    const targetId = Number(targetRow.dataset.folderValue);
-    if(targetId && targetId !== Number(folder.id)){
-      targetRow.classList.add("pointer-drop-target");
-      drag.targetFolderId = targetId;
-    }
-  });
-
-  const finish = async (e, cancelled=false) => {
-    if(!drag || e.pointerId !== drag.pointerId) return;
-    const result = drag;
-    drag = null;
-
-    resetVisuals();
-    try { handle.releasePointerCapture(e.pointerId); } catch {}
-
-    if(!result.active) return;
-    setTimeout(() => { folderDragInProgress = false; }, 120);
-    if(cancelled) return;
-
-    try {
-      if(result.moveToRoot){
-        await moveFolderToParent(folder.id, null);
-      } else if(result.targetFolderId){
-        await moveFolderToParent(folder.id, result.targetFolderId);
-      } else {
-        showToast("이동할 폴더 위에 = 버튼을 놓아 주세요.", "info");
-      }
-    } catch(err) {
-      showToast("폴더 이동 실패: " + err.message, "error");
-    }
-  };
-
-  handle.addEventListener("pointerup", e => finish(e, false));
-  handle.addEventListener("pointercancel", e => finish(e, true));
 }
 
 function renderFolders(data){
@@ -1265,6 +1297,70 @@ function itemCoversDate(item, day){
   return !!start && !!end && start <= key && key <= end;
 }
 
+function calendarJumpYearRange(){
+  const now = new Date().getFullYear();
+  const cursorYear = calendarCursor.getFullYear();
+  const start = Math.min(now - 10, cursorYear - 2);
+  const end = Math.max(now + 15, cursorYear + 2);
+  return {start, end};
+}
+
+function fillSelect(select, values, selected, formatter){
+  if(!select) return;
+  const current = String(selected);
+  select.innerHTML = values.map(v => `<option value="${v}"${String(v)===current ? " selected" : ""}>${formatter(v)}</option>`).join("");
+}
+
+function selectedCalendarDay(){
+  if(calendarDetailSelectedDate){
+    const d = new Date(calendarDetailSelectedDate + "T00:00:00");
+    if(d.getFullYear() === calendarCursor.getFullYear() && d.getMonth() === calendarCursor.getMonth()) return d.getDate();
+  }
+  const now = new Date();
+  if(now.getFullYear()===calendarCursor.getFullYear() && now.getMonth()===calendarCursor.getMonth()) return now.getDate();
+  return 1;
+}
+
+function syncCalendarJumpControls(){
+  const year = calendarCursor.getFullYear();
+  const month = calendarCursor.getMonth()+1;
+  const maxDay = new Date(year, month, 0).getDate();
+  const day = Math.min(selectedCalendarDay(), maxDay);
+  const range = calendarJumpYearRange();
+  const years = Array.from({length:range.end-range.start+1},(_,i)=>range.start+i);
+  const months = Array.from({length:12},(_,i)=>i+1);
+  const days = Array.from({length:maxDay},(_,i)=>i+1);
+
+  for(const prefix of ["calendarJump", "calendarDetailJump"]){
+    fillSelect($("#"+prefix+"Year"), years, year, v=>`${v}년`);
+    fillSelect($("#"+prefix+"Month"), months, month, v=>`${v}월`);
+    fillSelect($("#"+prefix+"Day"), days, day, v=>`${v}일`);
+  }
+}
+
+async function jumpCalendarFromControls(prefix, keepDetail=false){
+  const y = Number($("#"+prefix+"Year").value);
+  const m = Number($("#"+prefix+"Month").value);
+  const maxDay = new Date(y, m, 0).getDate();
+  const requestedDay = Number($("#"+prefix+"Day").value || 1);
+  const d = Math.max(1, Math.min(requestedDay, maxDay));
+  const target = new Date(y, m-1, d);
+  calendarCursor = new Date(y, m-1, 1);
+  calendarDetailSelectedDate = ymd(target);
+  await loadCalendar();
+  if(keepDetail) showCalendarDetail(calendarDetailSelectedDate);
+}
+
+function bindCalendarJumpControls(prefix, keepDetail=false){
+  const yearEl = $("#"+prefix+"Year");
+  const monthEl = $("#"+prefix+"Month");
+  const dayEl = $("#"+prefix+"Day");
+  const handler = () => jumpCalendarFromControls(prefix, keepDetail).catch(err => showToast("날짜 이동 실패: "+err.message,"error"));
+  yearEl?.addEventListener("change", handler);
+  monthEl?.addEventListener("change", handler);
+  dayEl?.addEventListener("change", handler);
+}
+
 function showCalendarDetail(selectedDate=null){
   currentMeetingId = null;
   currentMeeting = null;
@@ -1322,6 +1418,7 @@ function renderCalendarDetail(){
   $("#calendarDetailCount").textContent = String(calendarItems.length);
   $("#calendarDetailOpenCount").textContent = String(calendarItems.filter(x => x.status !== "completed").length);
   $("#calendarDetailDoneCount").textContent = String(calendarItems.filter(x => x.status === "completed").length);
+  syncCalendarJumpControls();
 
   const grid = $("#calendarDetailGrid");
   grid.innerHTML = "";
@@ -1409,6 +1506,7 @@ function renderCalendar(){
   const month = calendarCursor.getMonth();
   $("#calendarMonthLabel").textContent = `${year}년 ${month+1}월`;
   $("#calendarFollowUpCount").textContent = String(calendarItems.length);
+  syncCalendarJumpControls();
 
   const first = new Date(year, month, 1);
   const last = new Date(year, month+1, 0);
@@ -1430,6 +1528,7 @@ function renderCalendar(){
     cell.type = "button";
     cell.className = "calendar-day";
     if(key === todayKey) cell.classList.add("today");
+    if(key === calendarDetailSelectedDate) cell.classList.add("selected");
     if(items.length) cell.classList.add("has-followup");
     cell.innerHTML = `<span class="calendar-day-number">${day}</span>`;
     if(items.length){
@@ -1448,7 +1547,11 @@ function renderCalendar(){
       cell.appendChild(dots);
       cell.title = items.map(i => `${i.task} · ${i.owner || "담당자 미정"}`).join("\n");
     }
-    cell.onclick = () => renderCalendarFollowUpList(items.length ? items : calendarItems, key);
+    cell.onclick = () => {
+      calendarDetailSelectedDate = key;
+      renderCalendar();
+      renderCalendarFollowUpList(items.length ? items : [], key);
+    };
     grid.appendChild(cell);
   }
 
@@ -1458,6 +1561,30 @@ function renderCalendar(){
     $("#calendarFollowUpTitle").textContent = "이번 달 F/U";
     renderCalendarFollowUpList(calendarItems);
   }
+}
+
+function fuColorName(hex){
+  return FU_COLORS.find(c => c.hex === String(hex||"").toUpperCase())?.name || "색상";
+}
+
+function renderFuMemoColorPalette(){
+  const palette = $("#fuMemoColorPalette");
+  if(!palette) return;
+  palette.innerHTML = "";
+  FU_COLORS.forEach(item => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "fu-memo-color-chip" + (item.hex === fuMemoSelectedColor ? " selected" : "");
+    btn.style.background = item.hex;
+    btn.title = item.name;
+    btn.setAttribute("aria-label", item.name);
+    btn.onclick = () => {
+      fuMemoSelectedColor = item.hex;
+      renderFuMemoColorPalette();
+    };
+    palette.appendChild(btn);
+  });
+  $("#fuMemoColorName").textContent = fuColorName(fuMemoSelectedColor);
 }
 
 function openFuMemoDialog(item){
@@ -1470,6 +1597,8 @@ function openFuMemoDialog(item){
     item.meeting_title ? `연관 회의: ${item.meeting_title}` : null
   ].filter(Boolean).join(" · ");
   $("#fuMemoText").value = item.memo || "";
+  fuMemoSelectedColor = String(item.color || "#64748B").toUpperCase();
+  renderFuMemoColorPalette();
   $("#fuMemoStatus").textContent = "";
   $("#fuMemoStatus").classList.add("hidden");
   $("#fuMemoDialog").showModal();
@@ -1480,11 +1609,15 @@ async function saveFuMemo(){
   if(!fuMemoTarget) throw new Error("F/U 항목을 찾을 수 없습니다.");
   const updated = await api(`/api/follow-ups/${fuMemoTarget.id}/memo`, {
     method:"PATCH",
-    body:JSON.stringify({memo:$("#fuMemoText").value})
+    body:JSON.stringify({memo:$("#fuMemoText").value, color:fuMemoSelectedColor})
   });
   fuMemoTarget.memo = updated.memo || "";
+  fuMemoTarget.color = updated.color || fuMemoSelectedColor;
   const cached = calendarItems.find(x => Number(x.id) === Number(fuMemoTarget.id));
-  if(cached) cached.memo = updated.memo || "";
+  if(cached){
+    cached.memo = updated.memo || "";
+    cached.color = updated.color || fuMemoSelectedColor;
+  }
   return updated;
 }
 
@@ -1837,17 +1970,23 @@ $("#calendarDetailToday").onclick = async () => {
   await loadCalendar();
 };
 
+bindCalendarJumpControls("calendarJump", false);
+bindCalendarJumpControls("calendarDetailJump", true);
+
 $("#calendarPrev").onclick = async () => {
   calendarCursor = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth()-1, 1);
+  calendarDetailSelectedDate = null;
   await loadCalendar();
 };
 $("#calendarNext").onclick = async () => {
   calendarCursor = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth()+1, 1);
+  calendarDetailSelectedDate = null;
   await loadCalendar();
 };
 $("#calendarToday").onclick = async () => {
   const now = new Date();
   calendarCursor = new Date(now.getFullYear(), now.getMonth(), 1);
+  calendarDetailSelectedDate = ymd(now);
   await loadCalendar();
 };
 

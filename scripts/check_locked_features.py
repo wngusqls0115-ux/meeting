@@ -52,6 +52,25 @@ checks = {
         and "renderCalendarDetail" in JS
         and 'id="calendarDetailGrid"' in HTML
     ),
+    "calendar_date_jump": (
+        'id="calendarJumpYear"' in HTML
+        and 'id="calendarJumpMonth"' in HTML
+        and 'id="calendarJumpDay"' in HTML
+        and 'id="calendarDetailJumpYear"' in HTML
+        and "jumpCalendarFromControls" in JS
+    ),
+    "fu_calendar_color_edit": (
+        'id="fuMemoColorPalette"' in HTML
+        and "fuMemoSelectedColor" in JS
+        and "payload.color" in APP
+    ),
+    "folder_smooth_drag": (
+        "findFolderDropTarget" in JS
+        and "autoScrollFolderSidebar" in JS
+        and 'window.addEventListener("pointermove"' in JS
+    ),
+    "folder_help_removed": "folder-help" not in HTML,
+
     "fu_search": 'id="fuSearch"' in HTML and "/api/follow-ups/search" in APP,
     "fu_memo": 'id="fuMemoDialog"' in HTML and '/api/follow-ups/{follow_up_id}/memo' in APP,
     "fu_color": 'class="fu-color"' in JS,

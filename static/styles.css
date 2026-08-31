@@ -1293,3 +1293,27 @@ label input,label textarea,label select{margin-top:7px;font-weight:400}
   .calendar-detail-layout{overflow-x:auto}
   .calendar-detail-calendar-wrap{min-width:760px}
 }
+
+/* V13: direct date navigation */
+.calendar-date-jump{display:flex;gap:4px;align-items:center}
+.calendar-date-jump.compact{margin:4px 0 8px}
+.calendar-date-jump select{min-width:0;padding:5px 4px;border:1px solid #dbe3ec;border-radius:7px;background:#fff;color:#526174;font-size:9px}
+.calendar-date-jump.compact select:nth-child(1){flex:1.25}
+.calendar-date-jump.compact select:nth-child(2),.calendar-date-jump.compact select:nth-child(3){flex:1}
+.calendar-detail-controls{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.calendar-date-jump.detail select{padding:7px 8px;font-size:10px}
+.calendar-day.selected{background:#eaf3fb;box-shadow:inset 0 0 0 1px #89aeca}
+
+/* V13: per-task F/U color from calendar memo */
+.fu-memo-color-section{margin:10px 0 13px;padding:10px;border:1px solid #e3e8ee;border-radius:9px;background:#f8fafc}
+.fu-memo-color-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;color:#536275;font-size:10px}
+.fu-memo-color-head span{color:#8793a2}
+.fu-memo-color-palette{display:flex;flex-wrap:wrap;gap:7px}
+.fu-memo-color-chip{width:25px;height:25px;padding:0;border:2px solid transparent;border-radius:50%;box-shadow:0 0 0 1px rgba(50,65,80,.12);cursor:pointer}
+.fu-memo-color-chip.selected{border-color:#fff;box-shadow:0 0 0 2px #244b70}
+
+/* V13: smoother folder movement */
+.folder-move-handle{width:26px!important;flex-basis:26px!important;min-height:28px!important;font-size:16px!important}
+.folder-drag-active .folder-root-drop-zone{min-height:34px;padding:9px 8px;border-width:2px}
+.user-folder-row.pointer-drop-target{transform:translateX(2px);transition:background .08s ease,box-shadow .08s ease,transform .08s ease}
+.sidebar{scroll-behavior:auto}
